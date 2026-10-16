@@ -72,3 +72,7 @@ MIT，详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)，NOTICE 精确列明：
 ## 致谢
 
 特别感谢 [dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-whale)（DSH Web 鲸鱼娘皮肤系列 · 深海女仆工坊 maid-atelier，CC BY-NC-SA 4.0）：鲸鱼娘皮肤插件为 DeepSeek Harness Web 界面带来了一整套可爱的皮肤，让 DSH 的日常使用更有温度。
+
+## 第一阶段性能优化
+
+搜索新增发行版内的保守文件名预筛选，在原始输出限额之前排除无关文件；宿主侧每次查询只编译一次规则、只排序命中项。不支持的模式保留原路径。技能目录缓存淘汰时同步回收监控器，连同已失效目录最多保留 32 个监控。详见[范围、基准和回归检查](docs/performance-phase1.md)。

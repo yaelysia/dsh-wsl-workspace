@@ -60,3 +60,7 @@ network. Its mutation control: pointed at a tree before this split (`npm run tes
 Since #41 is merged, the gate runs in CI too: `npm run test:docs` is a step of the `checks`
 workflow's `lint-build` job, and it is registered in bucket A of
 [CHECK-CATALOG.md](./CHECK-CATALOG.md).
+
+## Performance work
+
+[Phase-one search and monitor changes](./performance-phase1.md): scope, repeatable benchmarks, and boundaries that remain.

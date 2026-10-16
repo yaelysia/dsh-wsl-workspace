@@ -295,6 +295,25 @@ try {
 
   console.log('PASS real distribution: grep framing/caps/errors, glob listing/order/caps, argv never shell-parsed');
   console.log('PASS real distribution: explicit dot-file targets, unreadable roots, odd root names, /mnt paths, abort + overflow');
+  // A selective query must not overflow on unrelated file types before filtering.
+  // The source and committed-artifact planes both execute these exact tool calls.
+  await wsl('bash', '-c', `set -eu
+    mkdir -p "$1/perf/src" "$1/perf/logs"
+    for ((i=0;i<200;i++)); do printf 'needle unrelated log\\n' > "$1/perf/logs/$i.log"; done
+    printf 'needle source\\n' > "$1/perf/src/main.ts"
+    printf 'needle hidden\\n' > "$1/perf/src/.hidden.ts"
+  `, 'dsh', root);
+  const selective = makeTools({rawOutputMaxBytes: 2048});
+  const selectedGlob = await selective.call(selective.glob, {pattern: '**/*.ts', path: 'perf'});
+  assert.deepEqual([...selectedGlob.paths].sort(), ['perf/src/.hidden.ts', 'perf/src/main.ts']);
+  const selectedGrep = await selective.call(selective.grep, {pattern: 'needle', include: 'perf/src/*.ts', path: 'perf'});
+  assert.deepEqual(selectedGrep.matches.map(match => match.path), ['perf/src/main.ts']);
+  const explicitHidden = await selective.call(selective.grep, {pattern: 'needle', include: 'perf/src/*.ts', path: 'perf/src/.hidden.ts'});
+  assert.deepEqual(explicitHidden.matches.map(match => match.path), ['perf/src/.hidden.ts']);
+  await fileAt(uncOf(root), 'perf/src/main.js', 'needle javascript\n');
+  const unionGrep = await selective.call(selective.grep, {pattern: 'needle', include: 'perf/src/*.{ts,js}', path: 'perf'});
+  assert.deepEqual(unionGrep.matches.map(match => match.path).sort(), ['perf/src/main.js', 'perf/src/main.ts']);
+  console.log('search prefilter tool contract: selective glob/grep fit the budget; explicit hidden target and multi-hint union preserved');
 } finally {
   for (const candidate of [root, outside]) {
     if (path.dirname(candidate) !== linux) throw new Error(`Unexpected fixture root: ${candidate}`);

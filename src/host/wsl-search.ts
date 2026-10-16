@@ -72,97 +72,9 @@ import type { SpillRef } from '@deepseek-ai/dsh-spill'
 import { isAbsoluteLinuxPath, parseWslUnc, windowsToMntPath } from '../shared/paths.ts'
 import { decodeWslOutput, defaultDistroSync } from '../shared/wsl.ts'
 import { getWorkspaceUsername } from '../shared/wsl-credentials.ts'
-
-/**
- * The fixed `grep` script the distribution runs. Model-controlled values arrive
- * as positional parameters, so no value is ever parsed by a shell; `$0` is the
- * literal {@link SCRIPT_ARGV0} marker (not a path).
- *
- * `-r` recurses, `-n` numbers lines, `-I` skips binary files, `-E` is POSIX ERE,
- * `-H` forces the file name onto every record (grep omits it when handed a single
- * file, which would break the framing below), and `-Z` terminates each file name
- * with NUL so the Node side can frame `path\0line:text` records unambiguously.
- *
- * The exclusions stand in for ripgrep's default hidden-entry skipping, which GNU
- * grep cannot express (it has no `.gitignore` support either). Three GNU quirks
- * shape how they are written, each measured against grep 3.12 on Ubuntu:
- *  - A file `--exclude` pattern silently cancels `--include` entirely, so the
- *    hidden-file guard rides `--include='[!.]*'` instead — and only when the
- *    caller passed no filter of its own (repeated includes are OR-ed) and only
- *    for a *directory* target, because a file the caller named explicitly is
- *    exactly what it asked for.
- *  - `--exclude-dir` excludes the search root itself when its base name starts
- *    with a dot, so that flag is skipped for a dot-rooted target.
- *  - `head -c` bounds the transfer in-distro, `PIPESTATUS[0]` keeps grep's own
- *    status rather than head's, and the search root is resolved physically first
- *    so a linked-in directory is searched where the file tools would read it.
- *
- * The search root is resolved physically first, so the printed paths are
- * absolute and a linked-in directory is searched at its real path — the same
- * place the file tools read and write.
- *
- * A distribution whose `grep` is not GNU's exits 3 with a diagnostic instead of
- * framing records the parser cannot read. Every mainstream WSL distribution
- * (Debian, Ubuntu, Fedora, Arch, openSUSE) ships GNU grep; Alpine's busybox grep
- * would report that clearly.
- */
-const GREP_SCRIPT = [
-  'set -u',
-  'pattern=$1; include=$2; target=$3; cap=$4',
-  '[ -n "$target" ] || target=.',
-  'if [ -d "$target" ]; then',
-  '  target=$(cd -- "$target" && pwd -P)',
-  '  dir=1',
-  'else',
-  '  case $target in /*) ;; *) target=$PWD/$target ;; esac',
-  '  dir=0',
-  'fi',
-  'if ! grep --version 2>/dev/null | head -n 1 | grep -q GNU; then',
-  '  printf "grep is not GNU grep: %s\\n" "$(grep --version 2>/dev/null | head -n 1)" >&2',
-  '  exit 3',
-  'fi',
-  'opts=(-rnIEH -Z)',
-  'if [ "$dir" = 1 ]; then',
-  '  opts+=(--exclude-dir=node_modules)',
-  '  case ${target##*/} in .*) ;; *) opts+=(--exclude-dir=".*") ;; esac',
-  '  [ -n "$include" ] || opts+=(--include="[!.]*")',
-  'fi',
-  'if [ -n "$include" ]; then',
-  '  while IFS= read -r one; do [ -n "$one" ] && opts+=(--include="$one"); done <<<"$include"',
-  'fi',
-  'grep "${opts[@]}" --regexp="$pattern" -- "$target" | head -c "$cap"',
-  'exit "${PIPESTATUS[0]}"',
-].join('\n')
-
-/**
- * The fixed `glob` script: an absolute file listing with modification times.
- *
- * `%T@` is the mtime in seconds (GNU find only), so the caller can order the
- * result the way ripgrep's `--sort=modified` does — oldest first — without a
- * stat per file and without a 9P round trip per file. VCS metadata directories
- * are pruned; the pattern itself is matched in Node.
- *
- * The header is `G`/`P` (GNU `-printf`, else the plain `-print0` fallback)
- * immediately followed by the physically resolved root, **NUL terminated** so a
- * path containing a newline cannot split it; every record after it is NUL framed
- * too. `PIPESTATUS[0]` is what the script exits with, because a `find` that
- * cannot read the target must not look like an empty directory.
- */
-const GLOB_SCRIPT = [
-  'set -u',
-  'target=$1; cap=$2',
-  '[ -n "$target" ] || target=.',
-  'if [ -d "$target" ]; then target=$(cd -- "$target" && pwd -P); else',
-  '  case $target in /*) ;; *) target=$PWD/$target ;; esac',
-  'fi',
-  'prune=(-name .git -o -name .hg -o -name .svn -o -name .bzr -o -name .jj -o -name .sl)',
-  'if find --version 2>/dev/null | head -n 1 | grep -q GNU; then',
-  "  { printf 'G%s\\0' \"$target\"; find \"$target\" \\( \"${prune[@]}\" \\) -prune -o -type f -printf '%T@\\t%p\\0'; } | head -c \"$cap\"",
-  'else',
-  "  { printf 'P%s\\0' \"$target\"; find \"$target\" \\( \"${prune[@]}\" \\) -prune -o -type f -print0; } | head -c \"$cap\"",
-  'fi',
-  'exit "${PIPESTATUS[0]}"',
-].join('\n')
+import { basenameFilters, compileGlob, expandBraces } from '../shared/search-patterns.ts'
+import { GREP_SCRIPT, GLOB_SCRIPT } from '../shared/search-scripts.ts'
+export { expandBraces, globToRegExp, matchGlob } from '../shared/search-patterns.ts'
 
 /** The marker `$0` of both scripts; a fixed string, never a path from the model. */
 const SCRIPT_ARGV0 = 'dsh'
@@ -369,118 +281,6 @@ export function parseGlobRecords(stdout: Buffer): WslGlobListing {
     })
   }
   return { mode, root, files }
-}
-
-/**
- * Expand one glob's `{a,b,c}` alternations into the equivalent list of plain
- * globs. ripgrep's globset understands braces; GNU grep's `--include` does not,
- * so the tool passes one `--include` per expansion (repeated includes are OR-ed).
- * @param glob - the glob to expand.
- * @returns every brace-free alternative, in source order.
- */
-export function expandBraces(glob: string): string[] {
-  const open = glob.indexOf('{')
-  if (open < 0) return [glob]
-  const close = glob.indexOf('}', open + 1)
-  if (close < 0) return [glob]
-  const head = glob.slice(0, open)
-  const tail = glob.slice(close + 1)
-  return glob.slice(open + 1, close).split(',').flatMap(part => expandBraces(`${head}${part}${tail}`))
-}
-
-/**
- * Translate one gitignore-style glob into a regular-expression source (no
- * anchors). `*` and `?` never cross a separator, `**` does (a `**` followed by a
- * separator also matches zero segments), `[...]` is a character class (negated
- * by a leading `!` or `^`), and `{a,b}` is an alternation.
- * @param pattern - the glob source.
- * @returns the unanchored regex source.
- */
-function globSource(pattern: string): string {
-  let source = ''
-  let index = 0
-  while (index < pattern.length) {
-    const char = pattern[index] ?? ''
-    if (char === '*') {
-      if (pattern[index + 1] === '*') {
-        if (pattern[index + 2] === '/') {
-          source += '(?:[^/]*/)*'
-          index += 3
-          continue
-        }
-        source += '.*'
-        index += 2
-        continue
-      }
-      source += '[^/]*'
-      index += 1
-      continue
-    }
-    if (char === '?') {
-      source += '[^/]'
-      index += 1
-      continue
-    }
-    if (char === '[') {
-      const close = pattern.indexOf(']', index + 2)
-      if (close > index + 1) {
-        const body = pattern.slice(index + 1, close)
-        const negated = body.startsWith('!') || body.startsWith('^')
-        const chars = (negated ? body.slice(1) : body).replace(/[\\^\]]/g, '\\$&')
-        source += `[${negated ? '^' : ''}${chars}]`
-        index = close + 1
-        continue
-      }
-      source += '\\['
-      index += 1
-      continue
-    }
-    if (char === '{') {
-      const close = pattern.indexOf('}', index + 1)
-      if (close > index + 1) {
-        const alternatives = pattern.slice(index + 1, close).split(',').map(part => globSource(part))
-        source += `(?:${alternatives.join('|')})`
-        index = close + 1
-        continue
-      }
-      source += '\\{'
-      index += 1
-      continue
-    }
-    source += /[.+^$()|\\]/.test(char) ? `\\${char}` : char
-    index += 1
-  }
-  return source
-}
-
-/**
- * Compile one glob into a whole-string matcher.
- * @param pattern - the glob source.
- * @returns the anchored regular expression.
- */
-export function globToRegExp(pattern: string): RegExp {
-  return new RegExp(`^${globSource(pattern)}$`)
-}
-
-/**
- * Whether one file passes a glob filter. A pattern containing `/` matches the
- * path relative to the search root; one without matches the basename at any
- * depth. A leading `!` negates the match, so `!*.log` keeps everything that is
- * not a log file.
- * @param pattern - the glob filter.
- * @param relativePath - the candidate's path relative to the search root.
- * @returns true when the file is selected.
- */
-export function matchGlob(pattern: string, relativePath: string): boolean {
-  let body = pattern
-  let negated = false
-  if (body.startsWith('!')) {
-    negated = true
-    body = body.slice(1)
-  }
-  const candidate = body.includes('/') ? relativePath : posix.basename(relativePath)
-  const matched = globToRegExp(body).test(candidate)
-  return negated ? !matched : matched
 }
 
 /**
@@ -1010,10 +810,11 @@ function registerGrep(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
       }
       // GNU grep's `--include` matches file NAMES; a path-shaped filter (`src/*.ts`,
       // ripgrep semantics) is therefore applied here, over the relative path, and
-      // no in-distro filter is passed at all — repeated includes are OR-ed, so
-      // mixing the two would silently drop the path-shaped half.
+      // only a conservative basename hint is pushed down. Repeated includes are
+      // OR-ed; final path matching stays here and its dialect is unchanged.
       const globs = expandBraces(input.include ?? '')
       const pathShaped = globs.filter(glob => glob.includes('/'))
+      const matchers = pathShaped.map(compileGlob)
       const argv = buildWslArgv(
         target,
         GREP_SCRIPT,
@@ -1022,6 +823,7 @@ function registerGrep(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
           pathShaped.length > 0 ? '' : globs.join('\n'),
           linuxTarget(input.path),
           String(config.rawOutputMaxBytes + 1),
+          ...(pathShaped.length > 0 ? basenameFilters(pathShaped, true) : []),
         ],
       )
       const run = await runInDistro(argv, config.wslPath, config.timeoutMs, config.rawOutputMaxBytes, exec.signal)
@@ -1031,7 +833,7 @@ function registerGrep(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
           if (pathShaped.length === 0) return true
           const relative = posix.relative(target.linuxCwd, record.path)
           const candidate = relative.startsWith('..') ? record.path : relative
-          return pathShaped.some(glob => matchGlob(glob, candidate))
+          return matchers.some(matches => matches(candidate))
         })
         .map(record => ({
           path: displayPath(record.path, target.linuxCwd),
@@ -1112,7 +914,7 @@ function registerGlob(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
       const argv = buildWslArgv(
         target,
         GLOB_SCRIPT,
-        [linuxTarget(input.path), String(config.rawOutputMaxBytes + 1)],
+        [linuxTarget(input.path), String(config.rawOutputMaxBytes + 1), ...basenameFilters([input.pattern])],
       )
       const run = await runInDistro(argv, config.wslPath, config.timeoutMs, config.rawOutputMaxBytes, exec.signal)
       const stdout = acceptRun(run, 'glob', config.rawOutputMaxBytes)
@@ -1120,14 +922,17 @@ function registerGlob(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
       const rootAbsolute = listing.root === '' ? target.linuxCwd : listing.root
       // ripgrep's `--sort=modified` orders oldest first, so the modification-time
       // head is the oldest file; the plain fallback has no mtimes and orders by path.
-      listing.files.sort(listing.mode === 'gnu'
+      const matches = compileGlob(input.pattern)
+      const selected = listing.files.filter(file => {
+        const relative = posix.relative(rootAbsolute, file.path)
+        return matches(relative === '' ? posix.basename(file.path) : relative)
+      })
+      selected.sort(listing.mode === 'gnu'
         ? (left, right) => left.mtimeMs - right.mtimeMs || left.path.localeCompare(right.path)
         : (left, right) => left.path.localeCompare(right.path))
       const root = input.path === undefined ? '.' : displayPath(rootAbsolute, target.linuxCwd)
       const paths: string[] = []
-      for (const file of listing.files) {
-        const relative = posix.relative(rootAbsolute, file.path)
-        if (!matchGlob(input.pattern, relative === '' ? posix.basename(file.path) : relative)) continue
+      for (const file of selected) {
         paths.push(displayPath(file.path, target.linuxCwd))
       }
       if (paths.length <= caps.maxResults) return { root, paths }
