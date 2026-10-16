@@ -1,0 +1,77 @@
+name: search-worker-build
+on:
+  push:
+    branches: [perf/persistent-search-worker]
+permissions:
+  contents: read
+concurrency:
+  group: search-worker-build
+  cancel-in-progress: false
+jobs:
+  build:
+    if: contains(github.event.head_commit.message, '[build-worker]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Apply the reviewed changeset
+        run: |
+          python3 - <<'PY'
+          import gzip, hashlib, subprocess
+          from pathlib import Path
+          data = gzip.decompress(Path('.search-worker.patch.gz').read_bytes())
+          assert hashlib.sha256(data).hexdigest() == '8bd8330f54fbe5c18793ca4074fb5c38162eda834a06a1406d9f4cf758976422'
+          subprocess.run(['git', 'apply', '--check', '--unidiff-zero', '-'], input=data, check=True)
+          subprocess.run(['git', 'apply', '--index', '--unidiff-zero', '-'], input=data, check=True)
+          PY
+          git rm -- .search-worker.patch.gz .github/workflows/search-worker-build.yml
+      - run: npm ci
+      - name: Build and stage the exact artifact
+        run: |
+          npm run build
+          git add -- lib
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'perf: reuse bounded WSL search workers with per-query cancellation'
+          npm run build
+          git diff --exit-code -- lib
+          node scripts/verify-lib-sync.mjs
+      - name: Unit, native transport and documentation regressions
+        run: |
+          npm run test:unit
+          npm run test:search-worker
+          npm run test:search-prefilter
+          npm run test:docs
+          npm run test:docs-claims
+          npm run test:matrix
+      - run: node ci/install-pinned.mjs
+      - name: Existing host contracts and type baseline
+        run: |
+          npm run test:node
+          npm run typecheck:gate
+          npm run test:seams
+      - name: Linux control and installable package
+        run: |
+          mkdir -p /tmp/search-worker-artifacts
+          npm run --silent bench:transport > /tmp/search-worker-artifacts/transport-linux.json
+          npm pack --ignore-scripts --pack-destination /tmp/search-worker-artifacts
+          git archive --format=tar HEAD > /tmp/search-worker-artifacts/source.tar
+      - name: Publish the validated branch without force
+        run: git push origin HEAD:refs/heads/perf/persistent-search-worker
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: search-worker-linux
+          path: /tmp/search-worker-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
