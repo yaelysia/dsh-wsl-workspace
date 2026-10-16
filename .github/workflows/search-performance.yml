@@ -5,6 +5,9 @@ on:
       - 'src/shared/search-*.ts'
       - 'src/host/wsl-search.ts'
       - 'scripts/benchmark-search.mjs'
+      - 'scripts/benchmark-transport.mjs'
+      - 'scripts/compatibility/search-real.mjs'
+      - 'tests/search-worker.test.mjs'
       - 'tests/search-prefilter.test.mjs'
       - '.github/workflows/search-performance.yml'
   workflow_dispatch:
@@ -30,8 +33,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      # Both test and benchmark import only Node built-ins and the production
-      # search scripts/matcher, so no npm install or DSH host is required here.
       - uses: Vampire/setup-wsl@v3
         with:
           distribution: Ubuntu-24.04
@@ -44,6 +45,23 @@ jobs:
           cat logs/kernel.txt
       - name: Native prefilter correctness on Windows to WSL2
         run: node --experimental-strip-types --test tests/search-prefilter.test.mjs
+      - name: Persistent worker concurrency, cancellation and lifecycle
+        run: node --experimental-strip-types --test tests/search-worker.test.mjs
+      - name: Install the existing pinned host for real tool contracts
+        run: |
+          npm ci
+          node ci/install-pinned.mjs
+      - name: Registered tools use the worker on source and committed artifact
+        env:
+          DSH_WSL_SEARCH_TRANSPORT: persistent
+          WSL_COMPAT_DRIVE_PATH: ${{ github.workspace }}\tests
+        run: |
+          node --experimental-strip-types scripts/compatibility/search-real.mjs
+          DSH_WSL_TEST_PLANE=lib node --experimental-strip-types scripts/compatibility/search-real.mjs
+      - name: Warmed transport A/B (informational, no latency gate)
+        run: |
+          node --experimental-strip-types scripts/benchmark-transport.mjs > logs/transport-benchmark.json
+          cat logs/transport-benchmark.json
       - name: Warmed script A/B (informational, no latency gate)
         run: |
           node --experimental-strip-types scripts/benchmark-search.mjs --files 1000 --iterations 10 > logs/search-benchmark.json
