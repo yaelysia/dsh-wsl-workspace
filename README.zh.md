@@ -75,4 +75,7 @@ MIT，详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)，NOTICE 精确列明：
 
 ## 第一阶段性能优化
 
+搜索通道现默认 `auto`：发行版已有 Python 3 时复用一个有并发上限的常驻工作进程，只使用标准库，不需要 pip 包或安装系统服务；没有 Python 3 则回退原来的一次性调用。启动 DSH 前设 `DSH_WSL_SEARCH_TRANSPORT=oneshot` 可强制原路径，设为 `persistent` 则要求新通道。详见[通道设计与验证](docs/performance-transport.md)。文件 read/write/edit 后端不变。
+
+
 搜索新增发行版内的保守文件名预筛选，在原始输出限额之前排除无关文件；宿主侧每次查询只编译一次规则、只排序命中项。不支持的模式保留原路径。技能目录缓存淘汰时同步回收监控器，连同已失效目录最多保留 32 个监控。详见[范围、基准和回归检查](docs/performance-phase1.md)。

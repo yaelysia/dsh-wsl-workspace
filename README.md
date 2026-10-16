@@ -81,4 +81,7 @@ Special thanks to [dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-wha
 
 ## Phase-one performance work
 
+Search transport now defaults to `auto`: when the distribution already has Python 3, a bounded persistent worker reuses one WSL process for repeated searches. It uses only the standard library; no pip packages or service installation are required. Without Python 3, the original one-shot path remains available. Set `DSH_WSL_SEARCH_TRANSPORT=oneshot` before starting DSH to force the old path, or `persistent` to require the new one. See [transport design and verification](docs/performance-transport.md). File read/write/edit are unchanged.
+
+
 Search now uses conservative native basename prefilters before the raw-output cap, compiles each host matcher once, and sorts only matched paths. Unsupported patterns keep the existing path. Skill catalog eviction retires its monitor too; cached and invalidated roots share a bounded 32-monitor lifecycle. See [scope, benchmarks and regression checks](docs/performance-phase1.md).

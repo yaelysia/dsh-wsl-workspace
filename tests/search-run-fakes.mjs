@@ -115,7 +115,8 @@ const ctx = {
   get: (key) => (key === 'tools' ? { register: (tool) => tools.set(tool.name, tool) } : undefined),
   effect: (fn) => { fn(); return () => {} },
 }
-apply(ctx, config)
+// This suite fakes execFile only; the persistent channel has real-process tests.
+apply(ctx, { ...config, transport: 'oneshot' })
 const toolName = process.env.DSH_PROBE_TOOL === 'glob' ? 'glob' : 'grep'
 const tool = tools.get(toolName)
 const controller = new AbortController()

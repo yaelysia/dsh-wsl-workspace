@@ -64,3 +64,5 @@ workflow's `lint-build` job, and it is registered in bucket A of
 ## Performance work
 
 [Phase-one search and monitor changes](./performance-phase1.md): scope, repeatable benchmarks, and boundaries that remain.
+
+- [Persistent search transport](performance-transport.md): Python-standard-library worker, lifecycle, fallback and byte-level benchmarks.

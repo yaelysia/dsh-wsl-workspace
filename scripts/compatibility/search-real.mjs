@@ -39,7 +39,9 @@ async function fileAt(base, relative, content) {
 /** Write one fixture file under the fixture root. */
 const file = (relative, content) => fileAt(uncRoot, relative, content)
 
+const disposers = [];
 const BASE_CONFIG = {
+  transport: process.env.DSH_WSL_SEARCH_TRANSPORT || 'auto',
   grepMaxMatches: 250,
   grepMaxLineBytes: 2000,
   globMaxResults: 100,
@@ -61,6 +63,7 @@ function makeTools(config = {}, options = {}) {
   const registry = new Map();
   const warnings = [];
   apply({
+    effect: callback => { const dispose = callback(); if (typeof dispose === 'function') disposers.push(dispose); },
     get: name => name === 'tools'
       ? {register: tool => registry.set(tool.name, tool)}
       : name === 'spillStore' ? options.spillStore : undefined,
@@ -319,6 +322,7 @@ try {
   assert.deepEqual(unionGrep.matches.map(match => match.path).sort(), ['perf/src/main.js', 'perf/src/main.ts']);
   console.log('search prefilter tool contract: selective glob/grep fit the budget; explicit hidden target and multi-hint union preserved');
 } finally {
+  for (const dispose of disposers) dispose();
   for (const candidate of [root, outside]) {
     if (path.dirname(candidate) !== linux) throw new Error(`Unexpected fixture root: ${candidate}`);
   }

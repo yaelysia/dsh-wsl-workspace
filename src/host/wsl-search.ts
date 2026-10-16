@@ -9,9 +9,9 @@
  * the model to grep through the shell.
  *
  * This module replaces that row with a WSL-native twin. The search executes
- * *inside the distribution* (`wsl.exe … bash -c <fixed script>`, every
- * model-controlled value passed as a separate argv element and never
- * interpolated into the script), so it runs on the Linux kernel over the real
+ * *inside the distribution* (a persistent byte channel, or one-shot
+ * `wsl.exe … bash -c <fixed script>`). Every model-controlled value is a
+ * separate argv element and is never interpolated into the script, so it runs on the Linux kernel over the real
  * tree — symlinks, permissions and ownership included — instead of crawling the
  * `\\wsl.localhost` 9P share.
  *
@@ -74,6 +74,8 @@ import { decodeWslOutput, defaultDistroSync } from '../shared/wsl.ts'
 import { getWorkspaceUsername } from '../shared/wsl-credentials.ts'
 import { basenameFilters, compileGlob, expandBraces } from '../shared/search-patterns.ts'
 import { GREP_SCRIPT, GLOB_SCRIPT } from '../shared/search-scripts.ts'
+import { SearchTransport, type SearchTransportMode } from '../shared/search-transport.ts'
+import { SearchWorkerCancelled } from '../shared/search-worker.ts'
 export { expandBraces, globToRegExp, matchGlob } from '../shared/search-patterns.ts'
 
 /** The marker `$0` of both scripts; a fixed string, never a path from the model. */
@@ -129,6 +131,8 @@ export interface Config {
   timeoutMs?: number
   /** The `wsl.exe` executable (absolute path or PATH name). */
   wslPath?: string
+  /** auto reuses Python 3 when available; oneshot is the previous backend. */
+  transport?: SearchTransportMode
   /** Distribution used only when the session cwd carries none (a Linux-absolute cwd). */
   distro?: string
 }
@@ -153,6 +157,7 @@ const DEFAULTS: ResolvedConfig = {
   rawOutputMaxBytes: RAW_OUTPUT_MAX_BYTES,
   timeoutMs: SEARCH_TIMEOUT_MS,
   wslPath: 'wsl.exe',
+  transport: 'auto',
 }
 
 /** Validated plugin config. */
@@ -165,6 +170,7 @@ export const Config: z<Config> = z.object({
   rawOutputMaxBytes: z.number().default(DEFAULTS.rawOutputMaxBytes),
   timeoutMs: z.number().default(DEFAULTS.timeoutMs),
   wslPath: z.string().default(DEFAULTS.wslPath),
+  transport: z.union(['auto', 'oneshot', 'persistent']).default(DEFAULTS.transport),
   distro: z.string(),
 })
 
@@ -737,9 +743,40 @@ export function apply(ctx: Context, config?: Config): void {
   const resolved: ResolvedConfig = { ...DEFAULTS, ...config === undefined ? {} : config }
   const tools = ctx.get('tools') as unknown as ToolsRegistryFace | undefined
   if (tools === undefined) return
-  registerGrep(ctx, tools, resolved)
-  registerGlob(ctx, tools, resolved)
+  const requested = config?.transport ?? process.env.DSH_WSL_SEARCH_TRANSPORT ?? resolved.transport
+  if (!['auto', 'oneshot', 'persistent'].includes(requested)) throw new Error(`invalid WSL search transport: ${requested}`)
+  // A real plugin scope owns cleanup. Minimal callers without a lifecycle retain one-shot behavior.
+  const mode = requested === 'auto' && typeof ctx.effect !== 'function' ? 'oneshot' : requested as SearchTransportMode
+  const transport = new SearchTransport(mode, (target, request, signal) => runInDistro(
+    buildWslArgv(target, request.op === 'grep' ? GREP_SCRIPT : GLOB_SCRIPT, request.args),
+    resolved.wslPath, request.timeoutMs, request.maxBytes - 1_048_576, signal,
+  ), target => ({
+    command: resolved.wslPath,
+    argv: ['-d', target.distro, ...target.username === undefined ? [] : ['-u', target.username],
+      '--cd', '/', '--exec', 'bash'],
+  }), message => console.warn(message))
+  if (typeof ctx.effect === 'function') ctx.effect(() => () => transport.dispose())
+  registerGrep(ctx, tools, resolved, transport)
+  registerGlob(ctx, tools, resolved, transport)
   registerGuidance(ctx)
+}
+
+/** Preserve the host's error vocabulary across both transports. */
+async function searchRun(transport: SearchTransport, target: WslSearchTarget, op: 'grep' | 'glob',
+  args: readonly string[], config: ResolvedConfig, signal?: AbortSignal): Promise<Buffer> {
+  try {
+    const run = await transport.run(target, {
+      op, args, cwd: target.linuxCwd, timeoutMs: config.timeoutMs,
+      maxBytes: config.rawOutputMaxBytes + 1_048_576,
+    }, signal)
+    if (run.overflow) throw new SearchError(`${op} exceeded its output budget`, 'SEARCH_RAW_OUTPUT_OVERFLOW')
+    return acceptRun(run, op, config.rawOutputMaxBytes)
+  } catch (error) {
+    if (error instanceof SearchWorkerCancelled || signal?.aborted) {
+      throw new SearchError(`${op} was cancelled or timed out before it finished`, 'SEARCH_ABORTED')
+    }
+    throw error
+  }
 }
 
 /**
@@ -748,7 +785,7 @@ export function apply(ctx: Context, config?: Config): void {
  * @param tools - the tool registry.
  * @param config - resolved configuration.
  */
-function registerGrep(ctx: Context, tools: ToolsRegistryFace, config: ResolvedConfig): void {
+function registerGrep(ctx: Context, tools: ToolsRegistryFace, config: ResolvedConfig, transport: SearchTransport): void {
   const caps = {
     maxMatches: config.grepMaxMatches,
     maxLineBytes: config.grepMaxLineBytes,
@@ -815,19 +852,13 @@ function registerGrep(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
       const globs = expandBraces(input.include ?? '')
       const pathShaped = globs.filter(glob => glob.includes('/'))
       const matchers = pathShaped.map(compileGlob)
-      const argv = buildWslArgv(
-        target,
-        GREP_SCRIPT,
-        [
-          input.pattern,
-          pathShaped.length > 0 ? '' : globs.join('\n'),
-          linuxTarget(input.path),
-          String(config.rawOutputMaxBytes + 1),
-          ...(pathShaped.length > 0 ? basenameFilters(pathShaped, true) : []),
-        ],
-      )
-      const run = await runInDistro(argv, config.wslPath, config.timeoutMs, config.rawOutputMaxBytes, exec.signal)
-      const stdout = acceptRun(run, 'grep', config.rawOutputMaxBytes)
+      const stdout = await searchRun(transport, target, 'grep', [
+        input.pattern,
+        pathShaped.length > 0 ? '' : globs.join('\n'),
+        linuxTarget(input.path),
+        String(config.rawOutputMaxBytes + 1),
+        ...pathShaped.length > 0 ? basenameFilters(pathShaped, true) : [],
+      ], config, exec.signal)
       const matches: GrepMatch[] = parseGrepRecords(stdout)
         .filter((record) => {
           if (pathShaped.length === 0) return true
@@ -862,7 +893,7 @@ function registerGrep(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
  * @param tools - the tool registry.
  * @param config - resolved configuration.
  */
-function registerGlob(ctx: Context, tools: ToolsRegistryFace, config: ResolvedConfig): void {
+function registerGlob(ctx: Context, tools: ToolsRegistryFace, config: ResolvedConfig, transport: SearchTransport): void {
   const caps = { maxResults: config.globMaxResults, sampleOverCapGlobResults: config.sampleOverCapGlobResults }
   const overCap = caps.sampleOverCapGlobResults
     ? `a larger result instead returns ${caps.maxResults} paths sampled across top-level entries`
@@ -911,13 +942,9 @@ function registerGlob(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
       if (target === undefined) {
         throw new SearchError('glob is only available in a WSL workspace session', 'SEARCH_FAILED')
       }
-      const argv = buildWslArgv(
-        target,
-        GLOB_SCRIPT,
-        [linuxTarget(input.path), String(config.rawOutputMaxBytes + 1), ...basenameFilters([input.pattern])],
-      )
-      const run = await runInDistro(argv, config.wslPath, config.timeoutMs, config.rawOutputMaxBytes, exec.signal)
-      const stdout = acceptRun(run, 'glob', config.rawOutputMaxBytes)
+      const stdout = await searchRun(transport, target, 'glob', [
+        linuxTarget(input.path), String(config.rawOutputMaxBytes + 1), ...basenameFilters([input.pattern]),
+      ], config, exec.signal)
       const listing = parseGlobRecords(stdout)
       const rootAbsolute = listing.root === '' ? target.linuxCwd : listing.root
       // ripgrep's `--sort=modified` orders oldest first, so the modification-time
