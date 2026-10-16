@@ -54,8 +54,8 @@ Local development control (Linux, Node 22.16.0, 1,000 unrelated log files, 10 sa
 | glob | 73,558 B | 488 B | 9.027 ms | 7.379 ms |
 | grep | 78,313 B | 367 B | 10.284 ms | 6.485 ms |
 
-These are fixture measurements, **not Windows/WSL speedup claims**. The Windows validation run records
-its own WSL2 JSON in `logs/search-benchmark.json`. Four lifecycle regression cases were
+These are fixture measurements, **not Windows/WSL speedup claims**. The `search-performance` workflow explicitly selects WSL2 and records
+its own JSON in `logs/search-benchmark.json`. Four lifecycle regression cases were
 also run against the original provider (4 failures) and the fix (4 passes), so the tests
 demonstrate a change rather than simply asserting the new implementation's shape.
 

@@ -297,12 +297,16 @@ try {
   console.log('PASS real distribution: explicit dot-file targets, unreadable roots, odd root names, /mnt paths, abort + overflow');
   // A selective query must not overflow on unrelated file types before filtering.
   // The source and committed-artifact planes both execute these exact tool calls.
-  await wsl('bash', '-c', `set -eu
+  // Use a script file, as the odd-name fixture above does: the wrapper's
+  // `wsl -- bash -c` path can split a multiline argv before Bash receives it.
+  await file('make-perf.sh', `set -eu
     mkdir -p "$1/perf/src" "$1/perf/logs"
     for ((i=0;i<200;i++)); do printf 'needle unrelated log\\n' > "$1/perf/logs/$i.log"; done
     printf 'needle source\\n' > "$1/perf/src/main.ts"
     printf 'needle hidden\\n' > "$1/perf/src/.hidden.ts"
-  `, 'dsh', root);
+  `);
+  await wsl('bash', `${root}/make-perf.sh`, root);
+  assert.equal((await fs.stat(path.join(uncRoot, 'perf/src/main.ts'))).isFile(), true);
   const selective = makeTools({rawOutputMaxBytes: 2048});
   const selectedGlob = await selective.call(selective.glob, {pattern: '**/*.ts', path: 'perf'});
   assert.deepEqual([...selectedGlob.paths].sort(), ['perf/src/.hidden.ts', 'perf/src/main.ts']);
