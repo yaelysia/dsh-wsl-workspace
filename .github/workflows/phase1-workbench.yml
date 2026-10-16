@@ -1,0 +1,21 @@
+name: phase1-workbench
+on:
+  push:
+    branches: [perf/phase1-workspace-tools]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Export tracked source for offline development
+        run: git archive --format=tar HEAD > source.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase1-source
+          path: source.tar
+          retention-days: 1
