@@ -28,12 +28,12 @@ jobs:
           python3 - <<'PY'
           import gzip, hashlib, subprocess
           from pathlib import Path
-          data = gzip.decompress(Path('.search-worker.patch.gz').read_bytes())
+          data = gzip.decompress(b''.join(Path(f'.search-worker.patch.{i}').read_bytes() for i in range(5)))
           assert hashlib.sha256(data).hexdigest() == '8bd8330f54fbe5c18793ca4074fb5c38162eda834a06a1406d9f4cf758976422'
           subprocess.run(['git', 'apply', '--check', '--unidiff-zero', '-'], input=data, check=True)
           subprocess.run(['git', 'apply', '--index', '--unidiff-zero', '-'], input=data, check=True)
           PY
-          git rm -- .search-worker.patch.gz .github/workflows/search-worker-build.yml
+          git rm -- .search-worker.patch.0 .search-worker.patch.1 .search-worker.patch.2 .search-worker.patch.3 .search-worker.patch.4 .github/workflows/search-worker-build.yml
       - run: npm ci
       - name: Build and stage the exact artifact
         run: |
