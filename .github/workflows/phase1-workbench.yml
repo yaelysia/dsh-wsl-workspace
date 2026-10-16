@@ -35,7 +35,7 @@ jobs:
           assert hashlib.sha256(data).hexdigest() == '3b47e795fdc13ecca6bdce3e4edae79df7cfc39463c58e47d3d9d22a67665744', 'changeset checksum mismatch'
           subprocess.run(['git', 'apply', '--check', '-'], input=data, check=True)
           subprocess.run(['git', 'apply', '--index', '-'], input=data, check=True)
-          subprocess.run(['git', 'apply', '--index', '.phase1-followup.patch'], check=True)
+          subprocess.run(['git', 'apply', '--ignore-space-change', '--index', '.phase1-followup.patch'], check=True)
           PY
       - run: npm ci
       - name: Build the exact distributable and stage its source
