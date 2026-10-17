@@ -1,8 +1,10 @@
 # Experimental persistent search transport
 
-Status: implemented and published with rebuilt `lib/` on `perf/phase2-search-transport`.
-The Node 24 build, pinned DSH integration and clean package installation have passed.
-**Windows/WSL validation is still pending.** The default remains `oneshot`.
+Implemented and published with rebuilt `lib/` on `perf/phase2-search-transport`.
+The Node 24 build, pinned DSH integration and clean package installation have passed;
+the native transport suite has passed on both Linux and Windows/WSL2. The default
+remains `oneshot`. Consult [PR #3](https://github.com/yaelysia/dsh-wsl-workspace/pull/3)
+for the current registered-tool and full compatibility check results.
 This work builds on phase one, including its documentation update at
 `3020a68b77bd55f0345d5f538803d4a4d827135b`.
 
@@ -85,8 +87,8 @@ launch Python/Bash directly; they do not pretend to measure the Windows boundary
 The `search-performance` workflow runs transport tests on Linux and Windows/WSL2. It
 also builds the plugin, installs the existing pinned DSH test dependencies and exercises
 `scripts/compatibility/search-real.mjs` with `DSH_WSL_TEST_SEARCH_TRANSPORT=persistent`,
-once against source and once against `lib/`. Its Windows result must be checked separately;
-phase one's green CI does not verify phase two.
+once against source and once against `lib/`. Its registered-tool result must be checked
+separately; successful native transport tests alone do not establish host integration.
 
 ## Node 24 build and publication
 
@@ -105,16 +107,38 @@ source or build output was changed to evade a test. Temporary delivery files and
 workflow are absent from the published tree. Neither `main` nor the user's local install
 was changed. Windows compatibility and speedup are not inferred from this Linux run.
 
-## Local development evidence
+## Windows/WSL2 evidence
 
-Linux, Node 22.16.0, Python 3.13.5; 21 transport cases pass, including real FIFO-blocked
-search cancellation, process cleanup, concurrent requests, queued cancellation, overload,
-missing-Python fallback, startup deadlines, protocol faults, identity separation and idle
-recovery. The existing unit bucket: 227 pass, zero fail, one existing host-dependency skip.
-The new transport module closure also passes a separate strict TypeScript check.
-These local readings are a development control, not Windows compatibility evidence.
+Measured on 2026-10-17 in [run 39012951540](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39012951540),
+commit `e14258b128a9128ddfbf3e9ce9323c0ae153bb08` (production code unchanged from the
+build commit above). Windows Node 24.21.0, Ubuntu-24.04, kernel
+`6.18.40.1-microsoft-standard-WSL2`. All 21 native transport cases passed, including
+cancellation, process-group cleanup, parallel requests and odd filenames.
 
 Alternating A/B, two warm-up pairs discarded, 30 samples per backend, 1,000 unrelated logs:
+
+| Operation | oneshot P50 / P95 | persistent P50 / P95 | identical stdout bytes |
+|---|---:|---:|---:|
+| glob | 133.630 / 150.362 ms | 12.100 / 13.390 ms | 488 |
+| grep | 131.715 / 144.280 ms | 9.789 / 10.936 ms | 367 |
+
+One persistent worker served all calls. Its first startup/query took 164.324 ms with the
+distribution already warm from fixture setup. These are **native script plus transport**
+readings, not DSH/model latency, UNC file I/O, a cold WSL boot or overall task speedup.
+No fixed latency gate is added; results from one CI fixture are not a guarantee for all
+workspaces. Raw JSON is the run's `search-performance-wsl2` artifact.
+
+That run's registered-tool check later failed on its Windows-drive fixture: the workflow
+had omitted `WSL_COMPAT_DRIVE_PATH`, leaving the driver's old machine-specific default.
+The workflow now supplies the actual checkout's `tests` directory and asserts it exists;
+the source/lib checks are retained with their logs archived. The native test/benchmark
+results above are valid, but the failed run is **not** an overall compatibility pass.
+
+## Local development control
+
+Linux, Node 22.16.0, Python 3.13.5; the same 21 transport cases passed. The new transport
+module closure also passed a separate strict TypeScript check. These local readings are
+a development control, not Windows compatibility evidence.
 
 | Operation | oneshot P50 / P95 | persistent P50 / P95 | stdout bytes |
 |---|---:|---:|---:|
@@ -122,7 +146,7 @@ Alternating A/B, two warm-up pairs discarded, 30 samples per backend, 1,000 unre
 | grep | 5.803 / 6.554 ms | 5.853 / 6.819 ms | 367 |
 
 The same worker served all persistent calls (one launch). First worker/query startup was
-37.761 ms, with the filesystem/distribution already warm from fixture setup. A 5,000-log
-control showed glob P50 11.527 → 12.836 ms and grep 7.921 → 7.665 ms. These controls show
-**no stable major Linux speedup**. The expected Windows benefit is removal of repeated
-`wsl.exe` startup; its actual size remains unmeasured here. No fixed latency gate is added.
+37.761 ms with the filesystem already warm. A 5,000-log control showed glob P50
+11.527 → 12.836 ms and grep 7.921 → 7.665 ms: **no stable major Linux speedup**.
+The Windows benefit measured separately above comes from reusing the Windows-to-WSL
+connection, not from replacing the search algorithm.
