@@ -1,49 +1,64 @@
-# 当前检查点 / Continuation checkpoint
+# 原生文件阶段检查点 / Continuation checkpoint
 
-## 接手入口
+## 当前状态：实现、补修与文档收尾完成
 
-- 工作分支：`perf/phase4-native-files`；[PR #5](https://github.com/yaelysia/dsh-wsl-workspace/pull/5)，叠加在第三阶段之上。
-- 用户目标：接着已有工作完成原生文件读取、写入、编辑，整理 README，并保留可接手的检查点。不要从第三阶段重做。
-- 本轮恢复到的已验证提交：`085c18ad20c5f73a01c24e32549ab4c79573d80a`。
-- 其中生产代码与构建产物来自 `b473fa02911983c7f410e9a82e36f26ec5038ecf`；后续仅删除临时交付 workflow。
-- `main`、前序分支及用户本机安装未改动；本检查点不授权自动合并或发布。
+工作分支：`perf/phase4-native-files`；[PR #5](https://github.com/yaelysia/dsh-wsl-workspace/pull/5)，基于第三阶段 `8d8b3a7c5b88cb1096eaed4d757f86586959505f`。
 
-## 已完成并存入 Git 的工作
+- 最新生产代码及配套 `lib/`：`2d3948d00be3642ddee83cbefed56cebde8e6178`。
+- 最后经三套完整 CI 验证的检查点：`e9f58fc38a3b3478515d595c80f6f65d303bba80`；它只删除临时交付 workflow，生产代码与上项一致。
+- 本文档收尾提交仅更新 README、检查点和持久证据，不修改 `src/` 或 `lib/`。用 `git log -1 -- CHECKPOINT.md` 获取本文档的提交，不将旧 CI 冒充后续提交的独立运行。
+- `main`、前序分支、用户本机安装未改动；PR 未合并、未发布 npm。版本号仍为开发用 `0.7.7`，以 SHA 区分构建。
 
-原生 `resolve/stat/lstat/read/range/list/write/edit`、固定后端/发行版/用户身份、写入版本保护与原子发布、取消回执及未知结果处理已实现。文件和搜索复用 owner-scoped RPC。最近的改动进一步复用最多四个 Linux 文件执行进程，修复逐操作启动 Python 导致的小文件性能回退；不要恢复为逐操作启动。
+用户指定的原生文件读取、写入、编辑和 README 整理均已落地；不要从第三阶段重新实现，也不要让用户手工应用补丁。
 
-中英文 README 已重整，七种其他语言已标明上游快照。实现合同见 [原生文件说明](docs/performance-phase4.md)。
+## 已完成的检查点
 
-## CP0：恢复与核验完成
+| 检查点 | 提交 | 内容 |
+|---|---|---|
+| 原生实现 | `a342fdb4e848ebf8d63e88c917739a66e530d09a` | 原生文件事务与 RPC |
+| README/测试环境修整 | `521256e29e9cb1db0d1d53f00f326a009297a968` | 中英文入口重组、宿主磁盘对照测试、配套构建 |
+| warm executor | `b473fa02911983c7f410e9a82e36f26ec5038ecf` | 复用最多四个 Linux 文件执行进程，修复重复启动 Python 的小文件回退 |
+| CP0 恢复 | `0a3648a95bf4d7d78e38cf97121d2be746a47116` | 恢复已完成工作，建立根目录检查点 |
+| CP1 补修 | `2d3948d00be3642ddee83cbefed56cebde8e6178` | 目录中指向 Windows 磁盘的链接与直接解析使用相同后端/版本；新增真实回归和 lib |
+| CP2 收尾 | 本文档所在提交 | 中英文导航、最终性能与验证范围、机器可读持久证据、接手说明 |
 
-对上述 `085c18ad`，以下运行的最终状态已实际读取，均为 success：
+CP1 的新增回归覆盖文件链接、目录链接、悬空链接、读取、版本保护写入、编辑、过期版本拒绝和条件创建。普通 Linux 条目没有新增逐项 RPC。原生 `lstat` 仍保留 Linux 链接身份。
 
-- [完整兼容矩阵](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39050302754)
-- [原生文件 Linux / WSL1 / WSL2、source / lib](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39050302741)
-- [搜索及默认 auto 回归](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39050302727)
-- [warm executor 构建与宿主集成](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39050176646)
+## 已实际确认的验证
 
-构建 artifact：`native-files-warm-build`，ID `12106794671`，含 source.tar、插件 tgz、commit.txt 和日志。WSL2 原生性能 artifact：`native-files-wsl2`，ID `12107731751`。Artifacts 有保存期限，不应将它们作为唯一长期交接材料。
+下面三套运行均对应 `e9f58fc3`，最终状态为 success：
 
-## 下一检查点的具体工作
+- [原生文件 Linux / WSL1 / WSL2，source / lib](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39052167196)：Windows 四条路径各 **22 通过、0 失败、0 跳过**；Linux source/lib 各 21 通过、1 项新增 Windows 专用测试明确跳过。
+- [搜索与默认自动 RPC](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39052167163)。
+- [完整兼容矩阵](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39052167175)。
 
-1. 核对已提交 warm-executor 代码与最终原生文件测试；只补真实缺口，不重复实现已完成的后端。
-2. 将最终 WSL1/WSL2 测量与验证提交写入持久文档，更新仍指向旧提交/运行状态的 PR 说明。
-3. 在中英文 README 增加本检查点入口，核验配置、限制和性能描述与实际实现一致。
-4. 修改后运行可执行的检查，提交后记录新的 SHA 和 CI 结果；未完成的检查明确列出。
+[CP1 交付构建](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39052042681) 在推送前通过 Node 24 构建/重复构建、234 项便携测试（另有1项既有依赖跳过）、30 项 RPC、2 项预筛选、108 项锁定宿主测试及集成、干净安装和原有类型门槛。**209-error 类型基线和既有文档/平台跳过项没有清零。**
 
-## 不得在续做中丢失的边界
+[持久验证记录](docs/native-files-validation.md) 与 [JSON 摘要](docs/evidence/native-files-validation.json) 分开保留 `085c18ad` 和 `e9f58fc3` 的数值、平台、artifact ID/摘要；不要混算不同运行器的结果。构建 artifact `native-routing-build`（ID `12107848458`）来自上述交付运行；关键证据不再只依赖会过期的 artifact。
 
-- 不自动重放已下发的写入；未知结果必须重读核对。原生目标不能故障后改走 UNC 写入。
-- 写入授权、条件创建、版本保护、属主/权限/扩展属性保留，以及分段读取的一致性检查不可因提速跳过。
-- Windows 盘保留 Windows 后端；Skill/inotify、PTC 和正文缓存不在本轮。
-- 完整读取和写入/编辑输入限 16 MiB；不是对任意外部编辑器的通用原子 CAS，也不是完整 OS 沙箱。
-- 固定 Node 24 / DSH 依赖验证与本地 Linux 控制测试分开记录；原有 209-error 类型基线和既有跳过项不伪装为全清零。
+## 接手先读与复现
 
-续做时先读取此文件和当前分支 HEAD，确认是否有更新，再修改。每个有意义的完成段应有独立提交及相应验证记录。
+先读取当前分支 HEAD 和本文件，检查有无新增提交。主要入口：`src/fs.ts`、`src/shared/native-files.ts`、`src/shared/native-file-worker.ts`、`src/shared/rpc-transport.ts`、`src/shared/rpc-worker.ts`。测试为 `tests/native-files.test.mjs`；完整行为见 [原生合同](docs/performance-phase4.md)。
 
-## CP1：目录条目跨 Windows 磁盘的路由修复
+在 Node 24 的开发/CI 检出环境：
 
-原生目录枚举中解析到 `/mnt/<drive>` 的条目现在与直接 `resolve` 使用同一 Windows 后端，并重新取得该后端的版本，避免将 Linux 版本交给 Windows 条件写入。普通 Linux 条目不增加逐文件 RPC。
+```text
+npm ci
+node ci/install-pinned.mjs
+npm run test:native-files
+DSH_WSL_TEST_PLANE=lib npm run test:native-files
+npm run test:search-transport
+npm run test:node
+npm run typecheck:gate
+npm run test:docs
+npm run test:docs-claims
+npm run verify:install
+```
 
-新增真实 Windows/WSL 用例覆盖文件链接、目录链接、悬空链接、版本匹配、读取、条件写入、编辑和条件创建。此用例在 Linux 明确跳过，不冒充跨系统验证。源码与配套 lib 在本提交中一起生成；推送前需通过 Node 24 构建、Linux 原生 source/lib、RPC、宿主集成、类型基线及安装检查。Windows 与完整矩阵须检查本提交之后的 PR CI；未完成前不算通过。
+上面的环境赋值是 Bash 写法；Windows PowerShell 用 `$env:DSH_WSL_TEST_PLANE='lib'`。Windows 用实际 `WSL_COMPAT_DISTRO`，不要使用旧机器的硬编码目录。修改生产源码后必须重建、校验并提交配套 `lib/`，再跑 source/lib 两条验证。Linux 跳过的 Windows 测试必须到 WSL1/WSL2 验证。
+
+## 尚未做 / 不要扩大完成声明
+
+用户实际 DSH Desktop 安装、未列出的宿主版本、主分支合并和正式发布不在已完成验证内。原生 watch、Skill/inotify、PTC 沙箱和正文缓存未实现；本轮没有将这些功能迁移到 Linux。后续改动应从本检查点继续，按小段提交实现、回归和验证记录。
+
+不可破坏的边界：已下发写入不自动重放；未知结果重读核对；原生目标失败后不改走 UNC 写入。Linux 权限/物理路径策略、条件创建、版本保护、属主/属性保留和流式版本检查保留。Windows 磁盘继续使用 Windows 后端。完整读取和写入/编辑输入限16 MiB；并非对任意外部编辑器的通用原子 CAS，也不是完整 OS 沙箱。

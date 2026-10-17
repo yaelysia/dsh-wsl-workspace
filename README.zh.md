@@ -1,6 +1,6 @@
 # dsh-wsl-workspace
 
-[English](README.md) · [中文](README.zh.md) · [上游译文](#相关文档)
+[English](README.md) · [中文](README.zh.md) · [上游译文](#相关文档) · [续做检查点](CHECKPOINT.md)
 
 **DSH 留在 Windows，项目留在本机 WSL。** 插件提供 WSL 工作区、持久 Bash、原生文件工具和常驻代码搜索，同时保留 `/mnt/<drive>` 对 Windows 文件的访问。
 
@@ -47,6 +47,7 @@ DSH Desktop 在自己的插件管理中添加同一目录。安装或修改环�
 用户名可选：留空使用发行版默认用户，填写后 **Bash、搜索及原生文件操作**均使用该 Linux 身份。Windows/UNC 文件访问不模拟这个用户。工作区选择保存在 `<dshHome>/wsl-workspaces.json`。
 
 文件解析后会绑定后端、发行版和用户。更换后端或身份设置后应重新解析目标或开始新会话；已通过原生后端读取的文件，不会因 RPC 失败而偷偷改用 UNC 重写。`/mnt/c/...`、`C:\...` 及解析到 Windows 磁盘的符号链接保留 Windows 直接访问路径。
+从目录列表取得的条目也遵循相同路由：Windows 目标使用 Windows 后端观察到的版本，不混用 Linux 版本进行条件写入。
 
 ## 配置
 
@@ -103,6 +104,12 @@ PTC `run_code` 仍受现有 Windows ACL/WSL 共享限制；文件工具原生化
 统计不保存文件路径、用户名、搜索词或正文，不落盘、不上传，随 provider 清理。它不是模型、网络或 DSH 全部调度耗时的追踪器。
 
 在 Windows 上用 `npm run bench:native-files -- --iterations 20` 重现文件测量：交替运行 native/UNC 的完整 provider 调用序列并核对内容，而非只计 Python 系统调用。Linux 运行仅作为原生路径对照。没有固定耗时门槛，不能将搜索加速幅度套用到文件读写。证据与适用范围分别见 [第一阶段](docs/performance-phase1.md)、[常驻搜索](docs/performance-phase2.md)、[RPC 与统计](docs/performance-phase3.md)、[原生文件](docs/performance-phase4.md)。
+
+### 已验证文件性能与续做入口
+
+补修版 `e9f58fc3` 的原生文件、搜索和完整兼容检查均已通过。一次 Windows/WSL2 对照中，原生 / UNC 的 P50 分别为：读取完整序列 **3.348 / 16.399 ms**，带版本保护的写入 **23.614 / 57.653 ms**，编辑 **22.297 / 69.603 ms**。夹具为 3,900 字节文本，排除两对预热后每后端交替采样 20 次；不代表冷启动、模型或 DSH 端到端耗时。
+
+[持久验证记录](docs/native-files-validation.md) 保留 WSL1/WSL2 结果、精确提交、artifact 摘要和适用范围。[CHECKPOINT.md](CHECKPOINT.md) 是后续接手入口，记录已完成改动、已验证代码、剩余边界和复现命令。较早的测量保留原提交标记，不冒充补修后的结果。
 
 ## 兼容性
 

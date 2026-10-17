@@ -1,6 +1,6 @@
 # dsh-wsl-workspace
 
-[English](README.md) · [中文](README.zh.md) · [Upstream translations](#documentation)
+[English](README.md) · [中文](README.zh.md) · [Upstream translations](#documentation) · [Continuation checkpoint](CHECKPOINT.md)
 
 Keep **DeepSeek Harness on Windows** and work in a **local WSL distribution**. The plugin
 provides WSL workspaces, persistent Bash, native file tools and persistent code search,
@@ -70,6 +70,8 @@ Linux targets are pinned to their backend, distribution and user when resolved. 
 backend/user settings requires a new resolution/session; a file already observed natively
 is never silently rewritten through UNC after an RPC failure. `/mnt/c/...` and `C:\...`
 file targets retain direct Windows access, including Linux symlinks resolving onto a drive.
+Directory listing follows the same routing: drive-backed entries carry Windows target keys
+and Windows-observed versions, not native versions that would break guarded writes.
 
 ## Configuration
 
@@ -167,6 +169,20 @@ native/UNC runs and content checks. Linux runs are native-only controls. There i
 latency gate, and search speedups are not file speedups. Evidence and scope live in the
 [phase-one](docs/performance-phase1.md), [persistent-search](docs/performance-phase2.md),
 [RPC/metrics](docs/performance-phase3.md) and [native-file](docs/performance-phase4.md) records.
+
+### Verified file performance and resuming work
+
+The corrected native-file checkpoint `e9f58fc3` passed native-file, search and full
+compatibility checks. On one Windows/WSL2 fixture, native versus UNC P50 was **3.348 vs
+16.399 ms** for `resolve + stat + read`, **23.614 vs 57.653 ms** for guarded write, and
+**22.297 vs 69.603 ms** for guarded edit. This used 3,900-byte text, two warm-up pairs and
+20 alternating samples per backend; it is not cold-start, model or end-to-end DSH latency.
+
+See [the durable validation record](docs/native-files-validation.md) for WSL1/WSL2 results,
+exact commits, artifact digests and scope. [CHECKPOINT.md](CHECKPOINT.md) is the starting
+point for continuation: completed changes, validated code, remaining boundaries and commands.
+Earlier measurements remain labelled with their own commits rather than being reused as
+results of a later fix.
 
 ## Compatibility
 
