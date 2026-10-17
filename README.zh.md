@@ -76,3 +76,5 @@ MIT，详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)，NOTICE 精确列明：
 ## 第一阶段性能优化
 
 搜索新增发行版内的保守文件名预筛选，在原始输出限额之前排除无关文件；宿主侧每次查询只编译一次规则、只排序命中项。不支持的模式保留原路径。技能目录缓存淘汰时同步回收监控器，连同已失效目录最多保留 32 个监控。详见[范围、基准和回归检查](docs/performance-phase1.md)。
+
+**实验性常驻搜索：**重新构建后，可用 `DSH_WSL_SEARCH_TRANSPORT=auto` 启用 Python 标准库工作进程复用；缺少 Python 时仅在启动阶段回退。默认仍为原有一次性执行。详见[实现、开关与验证边界](docs/performance-phase2.md)。

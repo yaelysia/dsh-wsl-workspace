@@ -1,0 +1,109 @@
+# Experimental persistent search transport
+
+Status: source implementation with Linux native regression evidence. **Not yet validated on
+Windows/WSL or rebuilt with the pinned DSH dependencies.** The default remains `oneshot`.
+This work is based on `10c992f7b28427383febc54438f5c719fa4fe19e` (phase-one PR).
+
+## Scope
+
+`grep` and `glob` keep their existing argument schemas, GNU scripts, parsing, exact path
+matching, ordering, retention and presentation. The replaceable seam is how the fixed
+scripts reach Linux. File reads/writes, permissions, skills and the interactive Bash
+session are unchanged. This is not a general-purpose agent or a filesystem backend.
+
+A new search provider owns a lazy pool keyed by WSL executable, distribution and username.
+A worker is one `wsl.exe → python3 -I -S -u` connection, not one per query. It uses only
+Python 3.8+ standard-library modules. No package, service, port or file is installed in WSL.
+Each query still starts its own **Linux Bash** process, so cwd and shell options do not leak
+between requests; the expensive Windows-to-WSL launch is what is reused.
+
+Requests travel over stdin as JSON-lines. Responses carry base64 stdout/stderr, preserving
+NUL/newline filenames and binary framing. Only the two bundled search scripts are callable;
+search patterns are data, not shell source. Bootstrap code is single-line ASCII so it does
+not rely on Windows/WSL preserving multiline command-line arguments.
+
+## Enable and revert
+
+Build the modified source with the repository's usual `npm ci` and `npm run build` first.
+An old `lib/` does not acquire this feature merely because its `src/` changed.
+
+Set the environment of the **DSH host process**, then restart that process:
+
+```powershell
+$env:DSH_WSL_SEARCH_TRANSPORT = 'auto'
+# Launch DSH from this environment, for example:
+dsh web
+```
+
+`oneshot` is the unchanged default. `persistent` requires the worker and reports startup
+errors directly. `auto` may fall back to oneshot **only before a request was dispatched**,
+for example when Python is absent. Failed startups have a 60-second per-identity cooldown
+and the provider logs its first fallback. Time spent attempting startup is deducted from
+the fallback deadline; cancellation never turns into another execution attempt.
+
+The search provider row can instead set `transport: auto|persistent|oneshot`; an explicit
+row setting takes precedence over the environment. This is a search-provider setting,
+not a new top-level setting of the workspace plugin. For Desktop, restarting only a
+window is insufficient if the existing host process still has the old environment.
+
+To revert, set `DSH_WSL_SEARCH_TRANSPORT=oneshot` and restart the host. No data migration
+or background service removal is involved.
+
+## Resource and recovery boundaries
+
+Per mounted search provider: at most four distribution/user identities. Per worker: four
+running native searches and sixteen outstanding requests total, including queued ones.
+Overload is rejected rather than creating an unbounded process pool. Idle workers exit
+after 30 seconds; a new request starts one again. The pool does not retain idle Node handles.
+
+Cancellation and timeouts stop a request's Linux process group without stopping unrelated
+requests. The cancelled slot stays reserved until acknowledgement. Provider disposal closes
+stdin, causing the worker to cancel/reap its jobs; a bounded host-side shutdown timer is the
+last resort for a broken worker. A worker crash or malformed response fails the affected
+requests: they are **not replayed**. A subsequent new call can start a replacement worker.
+
+The opt-in transport accepts at most 1 MiB of request JSON, 256 arguments, 64 MiB raw stdout
+budget and 1 MiB stderr per request. The existing raw-output cap plus one overflow-witness
+byte stays intact. Excess stderr is an explicit error, not silently truncated diagnostics.
+These transport limits do not change the default oneshot backend.
+
+## Verification commands
+
+```powershell
+npm run test:unit
+npm run test:search-transport
+npm run bench:search-transport -- --distro Ubuntu --files 1000 --iterations 30
+```
+
+On Windows, set `WSL_COMPAT_DISTRO` to the actual distribution for the native tests.
+The benchmark's `--distro` has the same meaning. On Linux the native tests and benchmark
+launch Python/Bash directly; they do not pretend to measure the Windows boundary.
+
+The `search-performance` workflow now runs transport tests on Linux and Windows/WSL2. It
+also builds the plugin, installs the existing pinned DSH test dependencies and exercises
+`scripts/compatibility/search-real.mjs` with `DSH_WSL_TEST_SEARCH_TRANSPORT=persistent`,
+once against source and once against `lib/`. These added CI paths are not yet run for this
+changeset; phase one's green CI does not verify phase two.
+
+## Local evidence
+
+Linux, Node 22.16.0, Python 3.13.5; 21 transport cases pass, including real FIFO-blocked
+search cancellation, process cleanup, concurrent requests, queued cancellation, overload,
+missing-Python fallback, startup deadlines, protocol faults, identity separation and idle
+recovery. The existing unit bucket: 227 pass, zero fail, one existing host-dependency skip.
+The new transport module closure also passes a separate strict TypeScript check.
+Node 24 remains the package's production requirement; these local readings do not replace
+its pinned Node 24/DSH build or Windows compatibility checks.
+
+Alternating A/B, two warm-up pairs discarded, 30 samples per backend, 1,000 unrelated logs:
+
+| Operation | oneshot P50 / P95 | persistent P50 / P95 | stdout bytes |
+|---|---:|---:|---:|
+| glob | 7.155 / 10.234 ms | 6.973 / 7.984 ms | 488 |
+| grep | 5.803 / 6.554 ms | 5.853 / 6.819 ms | 367 |
+
+The same worker served all persistent calls (one launch). First worker/query startup was
+37.761 ms, with the filesystem/distribution already warm from fixture setup. A 5,000-log
+control showed glob P50 11.527 → 12.836 ms and grep 7.921 → 7.665 ms. These controls show
+**no stable major Linux speedup**. The expected Windows benefit is removal of repeated
+`wsl.exe` startup; its actual size remains unmeasured here. No fixed latency gate is added.

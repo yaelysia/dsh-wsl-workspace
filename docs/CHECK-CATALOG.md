@@ -318,3 +318,13 @@ Deliberate non-coverage, each with its verdict rather than silence:
 | `scripts/benchmark-search.mjs` | informational warmed-script latency and byte-volume A/B, not a CI timing threshold | `bench:search`, WSL2 lib-plane CI |
 
 The formerly unbounded monitor finding is addressed by the lifecycle cases above.
+
+## Experimental persistent transport checks
+
+| Check | Meaning | Runner |
+|---|---|---|
+| `tests/search-transport.test.mjs` | real worker byte parity, FIFO cancellation/cleanup/concurrency/queue bounds; isolated startup/protocol/lifecycle faults | `test:search-transport`; `search-performance` Linux and Windows/WSL2 |
+| `scripts/compatibility/search-real.mjs` with `DSH_WSL_TEST_SEARCH_TRANSPORT=persistent` | full existing registered tool contract through the opt-in transport, with scoped cleanup | `search-performance`, source + lib |
+| `scripts/benchmark-search-transport.mjs` | same native scripts/argv, alternating oneshot and persistent transport, warm P50/P95 and launch count | `bench:search-transport`; informational WSL2 CI |
+
+Current local evidence and checks not yet run are in [performance-phase2.md](./performance-phase2.md).

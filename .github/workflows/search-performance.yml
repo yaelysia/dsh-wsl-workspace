@@ -4,8 +4,10 @@ on:
     paths:
       - 'src/shared/search-*.ts'
       - 'src/host/wsl-search.ts'
-      - 'scripts/benchmark-search.mjs'
+      - 'scripts/benchmark-search*.mjs'
       - 'tests/search-prefilter.test.mjs'
+      - 'tests/search-transport.test.mjs'
+      - 'scripts/compatibility/search-real.mjs'
       - '.github/workflows/search-performance.yml'
   workflow_dispatch:
 permissions:
@@ -30,12 +32,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      # Both test and benchmark import only Node built-ins and the production
-      # search scripts/matcher, so no npm install or DSH host is required here.
+      # Native transport tests need only Node, Linux Python and the bundled scripts.
+      # Pinned DSH dependencies are installed later for the registered-tool checks.
       - uses: Vampire/setup-wsl@v3
         with:
           distribution: Ubuntu-24.04
           set-as-default: 'true'
+          additional-packages: python3
       - name: Explicitly select WSL2 and record the kernel
         run: |
           wsl.exe --set-version "$WSL_COMPAT_DISTRO" 2
@@ -44,10 +47,27 @@ jobs:
           cat logs/kernel.txt
       - name: Native prefilter correctness on Windows to WSL2
         run: node --experimental-strip-types --test tests/search-prefilter.test.mjs
+      - name: Persistent transport lifecycle and native protocol
+        run: node --experimental-strip-types --test tests/search-transport.test.mjs
       - name: Warmed script A/B (informational, no latency gate)
         run: |
           node --experimental-strip-types scripts/benchmark-search.mjs --files 1000 --iterations 10 > logs/search-benchmark.json
           cat logs/search-benchmark.json
+      - name: Persistent vs oneshot transport A/B
+        run: |
+          node --experimental-strip-types scripts/benchmark-search-transport.mjs --files 1000 --iterations 30 > logs/transport-benchmark.json
+          cat logs/transport-benchmark.json
+      - name: Build and install the existing pinned host test dependencies
+        run: |
+          npm ci
+          npm run build
+          node ci/install-pinned.mjs
+      - name: Registered search contracts with the persistent backend, source and lib
+        env:
+          DSH_WSL_TEST_SEARCH_TRANSPORT: persistent
+        run: |
+          node --experimental-strip-types scripts/compatibility/search-real.mjs
+          DSH_WSL_TEST_PLANE=lib node --experimental-strip-types scripts/compatibility/search-real.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -55,3 +75,14 @@ jobs:
           path: logs/
           if-no-files-found: ignore
           retention-days: 7
+  linux-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --experimental-strip-types --test tests/search-transport.test.mjs
