@@ -24,6 +24,7 @@ jobs:
         shell: bash
     env:
       WSL_COMPAT_DISTRO: Ubuntu-24.04
+      WSL_COMPAT_DRIVE_PATH: ${{ github.workspace }}\tests
       MSYS_NO_PATHCONV: '1'
     steps:
       - uses: actions/checkout@v4
@@ -66,8 +67,9 @@ jobs:
         env:
           DSH_WSL_TEST_SEARCH_TRANSPORT: persistent
         run: |
-          node --experimental-strip-types scripts/compatibility/search-real.mjs
-          DSH_WSL_TEST_PLANE=lib node --experimental-strip-types scripts/compatibility/search-real.mjs
+          node -e "if (!require('node:fs').statSync(process.env.WSL_COMPAT_DRIVE_PATH).isDirectory()) process.exit(1)"
+          node --experimental-strip-types scripts/compatibility/search-real.mjs 2>&1 | tee logs/persistent-source.log
+          DSH_WSL_TEST_PLANE=lib node --experimental-strip-types scripts/compatibility/search-real.mjs 2>&1 | tee logs/persistent-lib.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
