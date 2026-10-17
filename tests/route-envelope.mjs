@@ -178,6 +178,28 @@ try {
   assert(allowed.status === 200 && allowed.envelope?.ok === true,
     'a real loopback request with a loopback Host is answered (the fence is not blanket-403)')
 
+  // Cross-entry integration: the search bundle registers statistics the host API must see.
+  const { apply: applySearch } = await import(pathToFileURL(join(repo, 'lib', 'wsl-search.js')).href)
+  const searchTools = new Map(), releaseSearch = []
+  applySearch({
+    get: name => name === 'tools' ? { register: tool => searchTools.set(tool.name, tool) } : undefined,
+    effect: setup => { const release = setup(); if (typeof release === 'function') releaseSearch.push(release) },
+  }, { transport: 'oneshot' })
+  try {
+    try { await searchTools.get('grep').execute({ pattern: 'redacted-probe' }, {}) } catch { /* no workspace: no process is launched */ }
+    const stats = await post({ method: 'performance' })
+    const providers = stats.envelope?.value?.providers
+    assert(stats.envelope?.ok === true && Array.isArray(providers) && providers.length === 1,
+      'performance route sees the independently loaded search bundle (shared registry)')
+    assert(providers?.[0]?.metrics?.stages['tool.grep']?.outcomes.error === 1,
+      'failed tool execution is counted without launching a worker')
+    assert(!stats.text.includes('redacted-probe'), 'performance route does not retain search patterns')
+    const denied = await postHost('evil.example.com', { method: 'performance' })
+    assert(denied.status === 403, 'performance route retains the existing loopback fence')
+  } finally { for (const release of releaseSearch.reverse()) release() }
+  const afterRelease = await post({ method: 'performance' })
+  assert(afterRelease.envelope?.value?.providers?.length === 0, 'disposing the search owner removes its diagnostic entry')
+
   const foreignPeer = await post({ method: 'describe' }, {
     headers: { 'x-test-non-loopback-peer': '1' },
   })

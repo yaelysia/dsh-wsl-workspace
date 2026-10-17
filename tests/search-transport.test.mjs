@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { randomBytes } from 'node:crypto'
 import { SearchWorkerPool } from '../src/shared/search-transport.ts'
+import { readMetadata } from '../src/shared/rpc-files.ts'
 import { searchWorkerCode } from '../src/shared/search-worker.ts'
 import { GLOB_SCRIPT, GREP_SCRIPT } from '../src/shared/search-scripts.ts'
 import { fixture, runBash } from '../scripts/benchmark-search.mjs'
@@ -15,7 +16,7 @@ const request = (op = 'glob', args = ['.', '1000001'], extra = {}) => ({ op, arg
 const linuxLaunch = (_, code) => spawn('python3', ['-I', '-S', '-u', '-c', code], { stdio: 'pipe' })
 const nativePool = options => new SearchWorkerPool({ ...windows ? {} : { launch: linuxLaunch }, ...options })
 const fake = code => () => spawn(process.execPath, ['-e', code], { stdio: 'pipe' })
-const ready = String.raw`process.stdout.write(JSON.stringify({ready:1,pid:process.pid})+'\n');`
+const ready = String.raw`process.stdout.write(JSON.stringify({ready:2,pid:process.pid,methods:['grep','glob','fs.metadata']})+'\n');`
 const response = String.raw`JSON.stringify({id:r.id,code:0,aborted:false,stdout:Buffer.from(r.cwd).toString('base64'),stderr:''})+'\n'`
 const echo = ready + `require('node:readline').createInterface({input:process.stdin}).on('line',s=>{const r=JSON.parse(s);process.stdout.write(${response})});`
 
@@ -213,7 +214,7 @@ test('caller cancellation interrupts startup without waiting for the shared boot
   try {
     const waiting = pool.run(target('/'), request('glob', [], {signal:stop.signal}))
     stop.abort()
-    await assert.rejects(waiting, error => error.code === 'SEARCH_ABORTED')
+    await assert.rejects(waiting, error => error.code === 'RPC_ABORTED')
   } finally { pool.dispose() }
 })
 
@@ -278,4 +279,88 @@ test('native search arguments cannot execute shell substitutions', async () => {
     await pool.run(target(root), request('grep', [`$(touch ${root}/injected)`, '', root, '1000001']))
     assert.equal((await runBash('test ! -e "$1/injected"', [root], distro)).code, 0)
   } finally {pool.dispose(); await runBash('rm -rf -- "$1"', [root], distro)}
+})
+
+
+test('search and batched metadata share one RPC process and preserve individual path errors', async () => {
+  const root = await fixture(1, distro)
+  const pool = nativePool()
+  try {
+    await runBash('ln -s "src/odd\nname.ts" "$1/alias"', [root], distro)
+    await pool.run(target(root), request())
+    const paths = [root, `${root}/src/odd\nname.ts`, `${root}/alias`, `${root}/missing`]
+    const rows = await readMetadata(pool, target(root), paths)
+    assert.deepEqual(rows.map(row=>row.path),paths)
+    assert.equal(rows[0].kind,'directory')
+    assert.equal(rows[1].kind,'file')
+    assert.equal(rows[2].symlink,true)
+    assert.equal(rows[2].realpath,rows[1].realpath)
+    assert.equal(rows[2].inode,rows[1].inode)
+    assert.equal(rows[3].error,'ENOENT')
+    assert.equal(pool.snapshot().launches,1)
+    const stats = pool.diagnostics()
+    assert.equal(stats.idleMs,120000)
+    assert.equal(stats.metrics.stages['rpc.fs.metadata.total'].count,1)
+    assert.equal(stats.metrics.stages['rpc.glob.execute'].samples,1)
+    assert.ok(!JSON.stringify(stats).includes(root), 'diagnostics leaked a path')
+    await assert.rejects(readMetadata(pool,target(root),['relative']),/absolute/)
+    await assert.rejects(readMetadata(pool,target(root),Array(65).fill(root)),/1-64/)
+    assert.equal(pool.snapshot().launches,1)
+  } finally { pool.dispose(); await runBash('rm -rf -- "$1"',[root],distro) }
+})
+
+test('metadata remains cancellable and does not silently accept a malformed result', async () => {
+  const pool = new SearchWorkerPool({launch:fake(echo)})
+  try {
+    await assert.rejects(readMetadata(pool,target('/'),['/']),/invalid metadata/)
+    const controller = new AbortController(); controller.abort()
+    await assert.rejects(readMetadata(pool,target('/'),['/'],{signal:controller.signal}), e=>e.code==='RPC_ABORTED')
+  } finally {pool.dispose()}
+})
+
+test('active calls survive idle timeout; idle expiry and LRU eviction have separate counters', async () => {
+  const delayed = ready + `require('node:readline').createInterface({input:process.stdin}).on('line',s=>{const r=JSON.parse(s);setTimeout(()=>process.stdout.write(${response}),140)})`
+  const pool = new SearchWorkerPool({launch:fake(delayed),idleMs:60,maxWorkers:1})
+  try {
+    const pending = pool.run(target('/'),request())
+    await delay(90)
+    assert.equal(pool.snapshot().workers,1)
+    assert.equal(pool.diagnostics().pending,1)
+    assert.equal((await pending).code,0)
+    await pool.run({...target('/'),distro:'other'},request())
+    assert.equal(pool.diagnostics().lruReleases,1)
+    assert.equal(pool.diagnostics().idleReleases,0)
+    await eventually(()=>pool.snapshot().workers===0,'idle timeout did not release worker')
+    assert.equal(pool.diagnostics().idleReleases,1)
+  } finally {pool.dispose()}
+})
+
+test('successive requests reset the idle deadline rather than rebuilding between gaps', async () => {
+  const pool = new SearchWorkerPool({launch:fake(echo),idleMs:160})
+  try {
+    for(let i=0;i<3;i++) { await pool.run(target('/'),request()); await delay(65) }
+    assert.equal(pool.snapshot().launches,1)
+    await eventually(()=>pool.snapshot().workers===0,'idle worker did not expire')
+    await pool.run(target('/'),request())
+    assert.equal(pool.snapshot().launches,2)
+  } finally {pool.dispose()}
+})
+
+test('old protocols fail before dispatch and auto falls back only once per call', async () => {
+  const pool = new SearchWorkerPool({launch:fake(String.raw`process.stdout.write('{"ready":1,"pid":1}\n');setInterval(()=>{},1000)`)})
+  try {
+    await pool.runAuto(target('/'),request(),async()=>({code:0,stdout:Buffer.alloc(0),stderr:Buffer.alloc(0),aborted:false,signal:null}))
+    assert.equal(pool.diagnostics().fallbacks,1)
+    assert.equal(pool.snapshot().launches,1)
+  } finally {pool.dispose()}
+})
+
+test('wire timing does not require synchronized clocks and metrics can be disabled', async () => {
+  const root=await fixture(1,distro)
+  const pool=nativePool({metrics:false})
+  try {
+    const result=await pool.run(target(root),request())
+    for(const field of ['readyMs','roundTripMs','queueMs','executionMs']) assert.ok(result.timing[field]>=0)
+    assert.deepEqual(pool.diagnostics().metrics.stages,{})
+  } finally {pool.dispose();await runBash('rm -rf -- "$1"',[root],distro)}
 })
