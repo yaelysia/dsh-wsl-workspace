@@ -348,11 +348,33 @@ export class WslFileSystem extends LocalFileSystem {
   override async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {
     const where = nativeCoordinate(String(target.targetKey))
     if (!where) return super.listDir(target, signal)
-    return this.nativeCall(async () => (await this.nativeClient!.list(this.rpcTarget(where), where.path, { signal })).map(row => ({
-      name: row.name, type: row.type as FsDirEntry['type'], target: this.targetFor({ ...where, path: row.path }),
-      ...row.version === undefined ? {} : { version: FsVersion(row.version) },
-      ...row.type === 'file' && row.size !== undefined ? { size: row.size } : {},
-    })))
+    return this.nativeCall(async () => {
+      const rows = await this.nativeClient!.list(this.rpcTarget(where), where.path, { signal })
+      const entries: FsDirEntry[] = []
+      for (const row of rows) {
+        if (signal?.aborted) throw new FsError('listDir aborted', 'FS_ABORTED')
+        const drive = mntToWindowsPath(row.path)
+        if (drive === null) {
+          entries.push({
+            name: row.name, type: row.type as FsDirEntry['type'], target: this.targetFor({ ...where, path: row.path }),
+            ...row.version === undefined ? {} : { version: FsVersion(row.version) },
+            ...row.type === 'file' && row.size !== undefined ? { size: row.size } : {},
+          })
+          continue
+        }
+        // A listed Linux symlink may physically point onto a Windows drive.
+        // Match resolve() routing and observe the version through that backend;
+        // carrying a Linux version into a guarded Windows write would be stale.
+        const mapped = await this.resolveUnc(drive, signal === undefined ? undefined : { signal })
+        const info = await super.stat(mapped, signal)
+        entries.push({
+          name: row.name, type: info?.type ?? 'other', target: mapped,
+          ...info === undefined ? {} : { version: info.version },
+          ...info?.type === 'file' ? { size: info.size } : {},
+        })
+      }
+      return entries
+    })
   }
 
   override async watch(target: FsTarget, changed: (error?: Error) => void, signal: AbortSignal): Promise<() => Promise<void>> {
