@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { randomBytes } from 'node:crypto'
+import { RPC_METHODS } from '../src/shared/rpc-metrics.ts'
 import { SearchWorkerPool } from '../src/shared/search-transport.ts'
 import { readMetadata } from '../src/shared/rpc-files.ts'
 import { searchWorkerCode } from '../src/shared/search-worker.ts'
@@ -16,7 +17,7 @@ const request = (op = 'glob', args = ['.', '1000001'], extra = {}) => ({ op, arg
 const linuxLaunch = (_, code) => spawn('python3', ['-I', '-S', '-u', '-c', code], { stdio: 'pipe' })
 const nativePool = options => new SearchWorkerPool({ ...windows ? {} : { launch: linuxLaunch }, ...options })
 const fake = code => () => spawn(process.execPath, ['-e', code], { stdio: 'pipe' })
-const ready = String.raw`process.stdout.write(JSON.stringify({ready:2,pid:process.pid,methods:['grep','glob','fs.metadata']})+'\n');`
+const ready = `process.stdout.write(JSON.stringify({ready:3,pid:process.pid,methods:${JSON.stringify(RPC_METHODS)}})+'\\n');`
 const response = String.raw`JSON.stringify({id:r.id,code:0,aborted:false,stdout:Buffer.from(r.cwd).toString('base64'),stderr:''})+'\n'`
 const echo = ready + `require('node:readline').createInterface({input:process.stdin}).on('line',s=>{const r=JSON.parse(s);process.stdout.write(${response})});`
 
@@ -245,7 +246,7 @@ test('fragmented responses retain every byte', async () => {
 test('oversized requests fail before dispatch and an idle worker remains usable', async () => {
   const pool = new SearchWorkerPool({ launch: fake(echo) })
   try {
-    await assert.rejects(pool.run(target('/'), request('grep', ['x'.repeat(1_048_576)])), /exceeds 1 MiB/)
+    await assert.rejects(pool.run(target('/'), request('grep', ['x'.repeat(1_048_576)])), /exceeds its byte limit/)
     assert.equal((await pool.run(target('/'), request())).code, 0)
   } finally { pool.dispose() }
 })

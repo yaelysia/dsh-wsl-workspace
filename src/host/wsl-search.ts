@@ -768,13 +768,15 @@ function createSearchRunner(ctx: Context, config: ResolvedConfig): { run: Search
   // Auto cannot retain a process without a disposal hook; legacy/minimal hosts keep oneshot.
   const owned = typeof ctx.effect === 'function'
   if (!owned && config.transport === 'persistent') throw new Error('wsl-search: persistent transport needs a host effect scope')
+  const owner = ctx.get('fs') as unknown as { rpcPoolFor?(options: { idleMs: number; metrics: boolean }): WslRpcPool | undefined } | undefined
+  const shared = owner?.rpcPoolFor?.(config)
   const pool = owned && config.transport !== 'oneshot'
-    ? new WslRpcPool({ idleMs: config.idleMs, metrics: config.metrics }) : undefined
+    ? shared ?? new WslRpcPool({ idleMs: config.idleMs, metrics: config.metrics }) : undefined
   const metrics = pool?.metrics ?? new RpcMetrics(config.metrics)
-  if (owned) ctx.effect(() => {
+  if (owned && (shared === undefined || pool !== shared)) ctx.effect(() => {
     const unregister = registerRpcDiagnostics(() => ({ mode: config.transport, effectiveMode: pool ? config.transport : 'oneshot',
       ...pool ? pool.diagnostics() : { workers: 0, launches: 0, pending: 0, metrics: metrics.snapshot() } }))
-    return () => { unregister(); pool?.dispose() }
+    return () => { unregister(); if (pool !== shared) pool?.dispose() }
   })
   const once = async (target: WslSearchTarget, op: 'grep' | 'glob', values: readonly string[], signal?: AbortSignal,
     timeout = config.timeoutMs): Promise<WslRun> => {

@@ -67,7 +67,7 @@ try {
   // 1. A link resolves to its real target, so reads work through it.
   const linked = await file.resolve(`${ws}\\link-file`);
   assert.equal(linked.displayPath, `${outsideLinux}/real.txt`, `display path: ${linked.displayPath}`);
-  assert.equal(String(linked.targetKey).toLowerCase(), `${outside}\\real.txt`.toLowerCase(), `target key: ${linked.targetKey}`);
+  assert.equal(file.processPath(linked), `${outsideLinux}/real.txt`, 'opaque target must address the real Linux file');
   assert.equal(await file.readText(linked), 'outside body\n');
   assert.equal(await file.readText(await file.resolve(`${ws}\\link-chain`)), 'outside body\n');
   assert.equal(await file.readText(await file.resolve(`${ws}\\link-dir\\nested.txt`)), 'nested body\n');
@@ -105,6 +105,7 @@ try {
   console.log('PASS real 9P fs: link -> real path, read/write through links, dangling-link create, link preserved,');
   console.log('PASS real 9P fs: policy fences the resolved target (outside link denied), distro /tmp allowed');
 } finally {
+  file.wslRpcPool?.dispose();
   await wsl('rm', '-f', '/tmp/dsh-wsl-fs-real.txt').catch(() => {});
   if (path.dirname(path.resolve(root)) !== path.resolve(parent)) throw new Error('Unexpected fixture root');
   await wsl('rm', '-rf', rootLinux).catch(error => console.error(`fs-real: cleanup failed (${error.message})`));

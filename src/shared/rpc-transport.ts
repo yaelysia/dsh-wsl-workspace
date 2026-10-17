@@ -1,9 +1,9 @@
-/** Shared, bounded WSL RPC lifecycle. Only versioned, bundled read-only methods are accepted. */
+/** Shared, bounded WSL RPC lifecycle. Only versioned, bundled methods are accepted; dispatched mutations are never replayed. */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
 import { decodeWslOutput } from './wsl.ts'
 import { rpcWorkerCode } from './rpc-worker.ts'
-import { RpcMetrics, type Outcome, type RpcMethod } from './rpc-metrics.ts'
+import { RPC_METHODS, RpcMetrics, type Outcome, type RpcMethod } from './rpc-metrics.ts'
 
 export interface RpcTarget { distro: string; username?: string; linuxCwd: string; wslPath: string }
 export interface RpcTiming { readyMs: number; roundTripMs: number; queueMs?: number; executionMs?: number }
@@ -12,6 +12,8 @@ export interface RpcRequest { op: RpcMethod; args: readonly string[]; timeoutMs:
 export type RpcLauncher = (target: RpcTarget, code: string) => ChildProcessWithoutNullStreams
 export interface RpcOptions { launch?: RpcLauncher; idleMs?: number; bootMs?: number; maxWorkers?: number; cooldownMs?: number; metrics?: boolean }
 interface Pending {
+  mutating: boolean
+  cancelling: boolean
   done(value: RpcRun): void
   fail(error: Error): void
   cleanup(): void
@@ -24,6 +26,8 @@ interface Pending {
 
 const abortedRun = (): RpcRun => ({ code: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), aborted: true, signal: null })
 const MAX_REQUEST = 1_048_576
+const MAX_FILE_REQUEST = 32 * MAX_REQUEST
+const mutationUnknown = (message: string) => new RpcTransportError(`file mutation result unknown: ${message}; re-read before retrying`, 'request', 'RPC_MUTATION_UNKNOWN')
 const MAX_PENDING = 16
 const MAX_BYTES = 64 * 1_048_576
 const PROTOCOL_SLACK = 2 * 1_048_576
@@ -138,16 +142,16 @@ class Worker {
     const id = this.nextId++
     const message = JSON.stringify({ id, op: request.op, args: request.args, cwd: target.linuxCwd,
       timeoutMs: remaining, maxBytes: request.maxBytes }) + '\n'
-    if (Buffer.byteLength(message) > MAX_REQUEST) throw new RpcTransportError('search request exceeds 1 MiB', 'request')
+    if (Buffer.byteLength(message) > (request.op.startsWith('fs.') && request.op !== 'fs.metadata' ? MAX_FILE_REQUEST : MAX_REQUEST)) throw new RpcTransportError('RPC request exceeds its byte limit', 'request', 'RPC_TOO_LARGE')
     clearTimeout(this.idleTimer)
     this.ref(true)
     return new Promise<RpcRun>((resolve, reject) => {
       const cancel = () => {
         const pending = this.pending.get(id)
-        if (!pending || pending.answered) return
-        pending.answered = true
+        if (!pending || pending.answered || pending.cancelling) return
+        pending.cancelling = true
         pending.cleanup()
-        resolve(abortedRun())
+        if (!pending.mutating) { pending.answered = true; resolve(abortedRun()) }
         // Keep the slot until acknowledgement: cancelled callers cannot flood the Linux queue.
         this.send(JSON.stringify({ id, op: 'cancel' }) + '\n')
         pending.cancelTimer = setTimeout(() => this.break('worker did not acknowledge cancellation'), 1500)
@@ -155,7 +159,7 @@ class Worker {
       }
       const timer = setTimeout(cancel, remaining)
       const cleanup = () => { clearTimeout(timer); request.signal?.removeEventListener('abort', cancel) }
-      this.pending.set(id, { done: resolve, fail: reject, cleanup, maxBytes: request.maxBytes, answered: false, readyMs: performance.now() - start, sentAt: performance.now() })
+      this.pending.set(id, { mutating: request.op === 'fs.write' || request.op === 'fs.edit', cancelling: false, done: resolve, fail: reject, cleanup, maxBytes: request.maxBytes, answered: false, readyMs: performance.now() - start, sentAt: performance.now() })
       request.signal?.addEventListener('abort', cancel, { once: true })
       this.send(message)
     })
@@ -191,8 +195,8 @@ class Worker {
   private reply(value: Record<string, unknown>): void {
     if (!value || typeof value !== 'object') throw new Error('not an object')
     if (!this.booted) {
-      if (value.ready !== 2 || !Number.isSafeInteger(value.pid) || !Array.isArray(value.methods)
-        || !['grep', 'glob', 'fs.metadata'].every(method => (value.methods as unknown[]).includes(method))) {
+      if (value.ready !== 3 || !Number.isSafeInteger(value.pid) || !Array.isArray(value.methods)
+        || !RPC_METHODS.every(method => (value.methods as unknown[]).includes(method))) {
         throw new Error('protocol/version or capability mismatch')
       }
       this.booted = true
@@ -231,7 +235,7 @@ class Worker {
     clearTimeout(pending.cancelTimer)
     if (!pending.answered) {
       if (result) pending.done(result)
-      else pending.fail(new RpcTransportError(String(value.error), 'request'))
+      else pending.fail(pending.mutating ? mutationUnknown(String(value.error)) : new RpcTransportError(String(value.error), 'request'))
     }
     this.rest()
   }
@@ -242,7 +246,7 @@ class Worker {
     this.rejectReady(error)
     for (const pending of this.pending.values()) {
       pending.cleanup(); clearTimeout(pending.cancelTimer)
-      if (!pending.answered) pending.fail(error)
+      if (!pending.answered) pending.fail(pending.mutating ? mutationUnknown(message) : error)
     }
     this.pending.clear()
     this.dispose()
@@ -255,7 +259,10 @@ class Worker {
     this.rejectReady(new RpcTransportError('search transport disposed', 'request'))
     for (const pending of this.pending.values()) {
       pending.cleanup(); clearTimeout(pending.cancelTimer)
-      if (!pending.answered) pending.done(abortedRun())
+      if (!pending.answered) {
+        if (pending.mutating) pending.fail(mutationUnknown('provider disposed before acknowledgement'))
+        else pending.done(abortedRun())
+      }
     }
     this.pending.clear()
     this.chunks = []; this.chunkBytes = 0
@@ -329,7 +336,7 @@ export class WslRpcPool {
       || !Number.isSafeInteger(request.maxBytes) || request.maxBytes <= 0 || request.maxBytes > MAX_BYTES) {
       throw new RpcTransportError('invalid search timeout or byte budget', 'request')
     }
-    if (!['grep', 'glob', 'fs.metadata'].includes(request.op) || !Array.isArray(request.args)
+    if (!(RPC_METHODS as readonly string[]).includes(request.op) || !Array.isArray(request.args)
       || request.args.length > 256 || request.args.some(arg => typeof arg !== 'string' || arg.includes('\0'))
       || !target.linuxCwd.startsWith('/') || target.linuxCwd.includes('\0')) {
       throw new RpcTransportError('invalid or excess RPC request', 'request')

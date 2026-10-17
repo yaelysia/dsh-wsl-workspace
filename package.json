@@ -43,7 +43,9 @@
     "test:search-prefilter": "node --experimental-strip-types --test tests/search-prefilter.test.mjs",
     "bench:search": "node --experimental-strip-types scripts/benchmark-search.mjs",
     "test:search-transport": "node --experimental-strip-types --test tests/search-transport.test.mjs",
-    "bench:search-transport": "node --experimental-strip-types scripts/benchmark-search-transport.mjs"
+    "bench:search-transport": "node --experimental-strip-types scripts/benchmark-search-transport.mjs",
+    "test:native-files": "node --experimental-strip-types --test tests/native-files.test.mjs",
+    "bench:native-files": "node --experimental-strip-types scripts/benchmark-native-files.mjs"
   },
   "exports": {
     ".": "./lib/index.js",

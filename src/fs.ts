@@ -1,32 +1,8 @@
 /**
- * WSL Service Provider for the `ctx.fs` capability seam. Backed by the host
- * filesystem over the `\\wsl.localhost\<distro>\…` 9P share — zero install
- * inside the distribution — while every model/UI-facing path is the Linux
- * path a WSL process would open (`processPath`, `displayPath`, `fileUrl`).
- * Reuses `LocalFileSystem`'s mechanics (realpath identity, atomic writes,
- * per-target locks, version guards) unchanged, because those operate on the
- * UNC path Node can open directly.
- *
- * Both UNC paths and Linux absolute paths resolve; Windows drive paths
- * resolve through their `/mnt/<drive>` form, so a WSL-composed session can
- * still touch the Windows filesystem coherently.
- *
- * Two seams the host's own provider supplies are re-established here, because
- * a WSL world mounts this backend in a preset realm where the host's
- * `fs-sandbox` wrapper (and therefore both behaviours) is not in the call
- * path:
- *
- * - **Linux symlinks**: the share lists a link but cannot resolve it, so a link
- *   path used to fail as missing. `resolve`/`lstat` now retry through the
- *   distribution (`wsl.exe … readlink -f`, see `shared/links.ts`) and continue
- *   at the real path — never silently replacing the link, since the fallback
- *   only runs when the direct resolution failed.
- * - **The file policy**: writes are fenced by `ctx.sandboxPolicy` exactly like
- *   `@deepseek-ai/dsh-fs-sandbox` fences the host backend — the same
- *   `writableRoots` allow-list, the same `FS_SANDBOX_DENIED` error the tool
- *   layer turns into its model-facing denial and escalation hint, and the same
- *   `sandboxMode` capability fact it reads to advertise escalation.
- *
+ * WSL filesystem provider. Native Linux operations use the world's shared RPC;
+ * Windows-drive targets and explicitly selected UNC targets retain fs-local.
+ * Target keys pin the backend and user that resolved them. Native writes/edit
+ * execute guard, match and atomic publication together inside Linux.
  * @module dsh-wsl-workspace/fs
  */
 
@@ -34,22 +10,33 @@ import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { link, lstat, rename } from 'node:fs/promises'
-import { FsError } from '@deepseek-ai/dsh-fs'
-import type { FsEditOutcome, FsEditRequest, FsPathInfo, FsTarget, FsVersion, FsWriteIntent, FsWriteOutcome } from '@deepseek-ai/dsh-fs'
+import { FsError, FsTargetKey, FsVersion } from '@deepseek-ai/dsh-fs'
+import type { FsDirEntry, FsInfo, FsEditOutcome, FsEditRequest, FsPathInfo, FsTarget, FsWriteIntent, FsWriteOutcome } from '@deepseek-ai/dsh-fs'
 import { LocalFileSystem } from '@deepseek-ai/dsh-fs-local'
 import { canonicalPath, writableRoots } from '@deepseek-ai/dsh-sandbox'
 import { resolveLinuxSymlink } from './shared/links.ts'
 import {
   isAbsoluteLinuxPath,
+  isValidWslUsername,
   joinUnc,
   mntToWindowsPath,
   parseWslUnc,
   windowsToMntPath,
 } from './shared/paths.ts'
 import { defaultDistroSync } from './shared/wsl.ts'
+import { getWorkspaceUsername } from './shared/wsl-credentials.ts'
+import { WslRpcPool, RpcTransportError, type RpcOptions, type RpcTarget } from './shared/rpc-transport.ts'
+import { registerRpcDiagnostics } from './shared/rpc-metrics.ts'
+import { resolveFileConfig, nativeKey, nativeCoordinate, type FileOptions, type NativeCoordinate } from './shared/native-file-config.ts'
+import { NativeFileClient, NativeFileError, decodeNativeText, type NativePolicy } from './shared/native-files.ts'
 
 /** Plugin config. `cwd`/`distro` are optional because UNC workdirs carry both. */
 export interface Config {
+  /** auto selects native when supported, native requires it, unc opts out. */
+  backend?: string
+  idleMs?: number
+  metrics?: boolean
+  wslPath?: string
   /** Base directory for relative paths without a per-call cwd (UNC or Linux). */
   cwd?: string
   /** Default distribution for Linux-absolute paths without a UNC cwd. */
@@ -92,19 +79,39 @@ interface ToolExecution {
  */
 export class WslFileSystem extends LocalFileSystem {
   static override Config: z<Config> = z.object({
+    backend: z.string(), idleMs: z.number(), metrics: z.boolean(), wslPath: z.string(),
     cwd: z.string(),
     distro: z.string(),
     diffBasisMaxBytes: z.number().default(10 * 1024 * 1024),
   })
 
+  /** Owner-scoped RPC shared by this filesystem and the search provider in the same realm. */
+  readonly wslRpcPool: WslRpcPool | undefined
+  private readonly nativeClient: NativeFileClient | undefined
+  private readonly fileOptions: FileOptions
+  private readonly nativeOnThisHost: boolean
+  private warnedFallback = false
   private readonly distro: string | undefined
   private readonly executionCwd = new AsyncLocalStorage<string | undefined>()
 
-  constructor(ctx: Context, config: Config) {
+  constructor(ctx: Context, config: Config, rpcOptions: RpcOptions = {}) {
     // schemastery fills the defaults before construction; the parent validates
     // `diffBasisMaxBytes` and stores the resolved shape.
     super(ctx, config)
     this.distro = config.distro
+    this.fileOptions = resolveFileConfig(config)
+    this.nativeOnThisHost = process.platform === 'win32' || rpcOptions.launch !== undefined
+    if (typeof ctx.effect === 'function') {
+      this.wslRpcPool = new WslRpcPool({ idleMs: this.fileOptions.idleMs, metrics: this.fileOptions.metrics, ...rpcOptions })
+      this.nativeClient = new NativeFileClient(this.wslRpcPool)
+      ctx.effect(() => {
+        const unregister = registerRpcDiagnostics(() => ({ owner: 'wsl-filesystem', mode: this.fileOptions.backend,
+          ...this.wslRpcPool!.diagnostics() }))
+        return () => { unregister(); this.wslRpcPool?.dispose() }
+      })
+    } else if (this.fileOptions.backend === 'native') {
+      throw new FsError('native filesystem requires a host disposal scope', 'FS_IO_ERROR')
+    }
     ctx.on('tools/execute', (exec: ToolExecution, next: () => unknown) => (
       this.executionCwd.run(exec.agent?.session.header.cwd, next)
     ))
@@ -225,7 +232,151 @@ export class WslFileSystem extends LocalFileSystem {
     throw new FsError(`wsl-fs: resolved path "${raw}" is outside the WSL execution world`, 'FS_IO_ERROR')
   }
 
+  private coordinateForPath(path: string, cwd?: string): NativeCoordinate | undefined {
+    if (!this.nativeOnThisHost || this.fileOptions.backend === 'unc' || !this.nativeClient) return undefined
+    const base = this.cwdOr(cwd)
+    const unc = parseWslUnc(path)
+    const baseUnc = parseWslUnc(base)
+    if (windowsToMntPath(path) !== null || (unc === null && mntToWindowsPath(path) !== null)) return undefined
+    const distro = unc?.distro ?? baseUnc?.distro ?? (isAbsoluteLinuxPath(base) || isAbsoluteLinuxPath(path) ? this.distroFor(cwd) : undefined)
+    if (distro === undefined) return undefined
+    const linuxPath = unc?.linuxPath ?? (isAbsoluteLinuxPath(path) ? path
+      : baseUnc !== null ? `${baseUnc.linuxPath}/${path}` : `${base}/${path}`)
+    if (mntToWindowsPath(linuxPath) !== null) return undefined
+    const username = getWorkspaceUsername(base)
+    if (username !== undefined && !isValidWslUsername(username)) throw new FsError('invalid configured WSL username', 'FS_IO_ERROR')
+    return { distro, path: linuxPath, ...username === undefined ? {} : { username } }
+  }
+
+  /** Share only when lifecycle/metrics policy agrees; an explicit consumer override stays effective. */
+  rpcPoolFor(options: { idleMs: number; metrics: boolean }): WslRpcPool | undefined {
+    return options.idleMs === this.fileOptions.idleMs && options.metrics === this.fileOptions.metrics ? this.wslRpcPool : undefined
+  }
+
+  private rpcTarget(where: NativeCoordinate): RpcTarget {
+    return { distro: where.distro, linuxCwd: '/', wslPath: this.fileOptions.wslPath,
+      ...where.username === undefined ? {} : { username: where.username } }
+  }
+
+  private targetFor(where: NativeCoordinate): FsTarget {
+    return { targetKey: FsTargetKey(nativeKey(where)), displayPath: where.path }
+  }
+
+  private async nativeCall<T>(operation: () => Promise<T>): Promise<T> {
+    try { return await operation() }
+    catch (error) {
+      if (error instanceof FsError) throw error
+      if (error instanceof NativeFileError) throw new FsError(error.message, error.code, { cause: error })
+      throw new FsError(error instanceof Error ? error.message : String(error), 'FS_IO_ERROR', { cause: error })
+    }
+  }
+
   override async resolve(path: string, opts?: { cwd?: string; signal?: AbortSignal }): Promise<FsTarget> {
+    if (opts?.signal?.aborted) throw new FsError('resolve aborted', 'FS_ABORTED')
+    if (path.trim().length === 0) throw new FsError('file_path must be a non-empty string', 'FS_NOT_FOUND')
+    const where = this.coordinateForPath(path, opts?.cwd)
+    if (where === undefined) return this.resolveUnc(path, opts)
+    return this.nativeCall(async () => {
+      let actual: string
+      try { actual = await this.nativeClient!.resolve(this.rpcTarget(where), where.path, opts) }
+      catch (error) {
+        // Fallback happens only before a target/observation is created, and cannot change an explicit user.
+        if (this.fileOptions.backend !== 'auto' || where.username !== undefined
+          || !(error instanceof RpcTransportError) || error.stage !== 'startup' || opts?.signal?.aborted) throw error
+        if (!this.warnedFallback) { this.warnedFallback = true; console.warn('wsl-fs: native startup unavailable; resolving via UNC') }
+        return this.resolveUnc(path, opts)
+      }
+      const drive = mntToWindowsPath(actual)
+      if (drive !== null) return this.resolveUnc(drive, opts)
+      return this.targetFor({ ...where, path: actual })
+    })
+  }
+
+  override async stat(target: FsTarget, signal?: AbortSignal): Promise<FsInfo | undefined> {
+    const where = nativeCoordinate(String(target.targetKey))
+    if (!where) return super.stat(target, signal)
+    return this.nativeCall(async () => {
+      const value = await this.nativeClient!.stat(this.rpcTarget(where), where.path, false, { signal })
+      return value === undefined ? undefined : { ...value, type: value.type as FsInfo['type'], version: FsVersion(value.version) }
+    })
+  }
+
+  override async readText(target: FsTarget, signal?: AbortSignal): Promise<string> {
+    const where = nativeCoordinate(String(target.targetKey))
+    if (!where) return super.readText(target, signal)
+    return this.nativeCall(async () => decodeNativeText(await this.nativeClient!.read(this.rpcTarget(where), where.path, undefined, { signal })))
+  }
+
+  override async readBytes(target: FsTarget, signal: AbortSignal | undefined, maxBytes: number): Promise<Uint8Array> {
+    const where = nativeCoordinate(String(target.targetKey))
+    if (!where) return super.readBytes(target, signal, maxBytes)
+    return this.nativeCall(() => this.nativeClient!.read(this.rpcTarget(where), where.path, maxBytes, { signal }))
+  }
+
+  override async readByteRange(target: FsTarget, range: { offset: number; length: number }, signal?: AbortSignal): Promise<Uint8Array> {
+    const where = nativeCoordinate(String(target.targetKey))
+    if (!where) return super.readByteRange(target, range, signal)
+    return this.nativeCall(() => this.nativeClient!.range(this.rpcTarget(where), where.path, range.offset, range.length, undefined, { signal }))
+  }
+
+  override async streamText(target: FsTarget, signal?: AbortSignal): Promise<AsyncIterable<string>> {
+    const where = nativeCoordinate(String(target.targetKey))
+    if (!where) return super.streamText(target, signal)
+    const provider = this
+    return (async function* () {
+      const meta = await provider.stat(target, signal)
+      if (!meta) throw new FsError('file not found', 'FS_NOT_FOUND')
+      if (meta.type !== 'file') throw new FsError('not a regular file', 'FS_NOT_REGULAR_FILE')
+      const decoder = new TextDecoder('utf-8', { fatal: true })
+      let offset = 0
+      while (true) {
+        const chunk = await provider.nativeCall(() => provider.nativeClient!.range(provider.rpcTarget(where), where.path,
+          offset, 256 * 1024, String(meta.version), { signal }))
+        if (offset < 8192 && chunk.subarray(0, 8192 - offset).includes(0)) throw new FsError('binary file', 'FS_NOT_TEXT')
+        try {
+          const decoded = decoder.decode(chunk, { stream: true })
+          if (decoded) yield decoded
+        } catch { throw new FsError('invalid UTF-8 text', 'FS_NOT_TEXT') }
+        offset += chunk.length
+        if (chunk.length < 256 * 1024) break
+      }
+      try { const tail = decoder.decode(); if (tail) yield tail }
+      catch { throw new FsError('invalid UTF-8 text', 'FS_NOT_TEXT') }
+    })()
+  }
+
+  override async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {
+    const where = nativeCoordinate(String(target.targetKey))
+    if (!where) return super.listDir(target, signal)
+    return this.nativeCall(async () => (await this.nativeClient!.list(this.rpcTarget(where), where.path, { signal })).map(row => ({
+      name: row.name, type: row.type as FsDirEntry['type'], target: this.targetFor({ ...where, path: row.path }),
+      ...row.version === undefined ? {} : { version: FsVersion(row.version) },
+      ...row.type === 'file' && row.size !== undefined ? { size: row.size } : {},
+    })))
+  }
+
+  override async watch(target: FsTarget, changed: (error?: Error) => void, signal: AbortSignal): Promise<() => Promise<void>> {
+    if (nativeCoordinate(String(target.targetKey))) {
+      if (signal.aborted) throw new FsError('watch aborted', 'FS_ABORTED')
+      throw new FsError('native filesystem watching is not implemented', 'FS_IO_ERROR')
+    }
+    return super.watch(target, changed, signal)
+  }
+
+  private nativePolicy(where: NativeCoordinate, perCall?: SandboxPolicyLike): NativePolicy | undefined {
+    const policy = this.sandboxPolicy(perCall)
+    if (policy === undefined) return undefined
+    const roots = this.writableRoots(policy).flatMap(root => {
+      const unc = parseWslUnc(root)
+      if (unc !== null) return unc.distro.toLowerCase() === where.distro.toLowerCase() ? [unc.linuxPath] : []
+      const drive = windowsToMntPath(root)
+      return drive !== null ? [drive] : isAbsoluteLinuxPath(root) ? [root] : []
+    })
+    if (policy.mode === 'workspace-write') roots.push('/tmp')
+    return { mode: policy.mode, roots }
+  }
+
+  private async resolveUnc(path: string, opts?: { cwd?: string; signal?: AbortSignal }): Promise<FsTarget> {
     if (opts?.signal?.aborted) throw new FsError('resolve aborted', 'FS_ABORTED')
     const { input, cwd } = this.translate(path, opts?.cwd)
     const resolved = { cwd, ...opts?.signal !== undefined ? { signal: opts.signal } : {} }
@@ -333,7 +484,7 @@ export class WslFileSystem extends LocalFileSystem {
       )
     }
     if (policy.mode !== 'workspace-write') return target
-    const fresh = await this.resolve(target.displayPath)
+    const fresh = await this.resolveUnc(target.displayPath)
     for (const root of this.writableRoots(policy)) {
       if (this.underRoot(String(fresh.targetKey), root)) return fresh
     }
@@ -375,7 +526,13 @@ export class WslFileSystem extends LocalFileSystem {
     signal?: AbortSignal,
     sandboxPolicy?: SandboxPolicyLike,
   ): Promise<FsWriteOutcome> {
-    return super.writeText(await this.checkedTarget(target, sandboxPolicy), content, expected, signal)
+    const where = nativeCoordinate(String(target.targetKey))
+    if (!where) return super.writeText(await this.checkedTarget(target, sandboxPolicy), content, expected, signal)
+    return this.nativeCall(async () => {
+      const value = await this.nativeClient!.write(this.rpcTarget(where), where.path, content, expected,
+        this.nativePolicy(where, sandboxPolicy), this.config.diffBasisMaxBytes, { signal })
+      return { operation: value.operation!, version: FsVersion(value.version), before: value.before, after: value.after }
+    })
   }
 
   /** Fence an edit by the policy, then delegate to the parent. */
@@ -386,11 +543,19 @@ export class WslFileSystem extends LocalFileSystem {
     signal?: AbortSignal,
     sandboxPolicy?: SandboxPolicyLike,
   ): Promise<FsEditOutcome> {
-    return super.editText(await this.checkedTarget(target, sandboxPolicy), edit, expected, signal)
+    const where = nativeCoordinate(String(target.targetKey))
+    if (!where) return super.editText(await this.checkedTarget(target, sandboxPolicy), edit, expected, signal)
+    return this.nativeCall(async () => {
+      const value = await this.nativeClient!.edit(this.rpcTarget(where), where.path, edit, expected?.version,
+        this.nativePolicy(where, sandboxPolicy), { signal })
+      return { version: FsVersion(value.version), before: value.before!, after: value.after }
+    })
   }
 
   override processPath(target: FsTarget): string {
     const key = String(target.targetKey)
+    const native = nativeCoordinate(key)
+    if (native) return native.path
     const unc = parseWslUnc(key)
     if (unc !== null) return unc.linuxPath
     const mnt = windowsToMntPath(key)
@@ -407,7 +572,7 @@ export class WslFileSystem extends LocalFileSystem {
   override contains(parent: FsTarget, child: FsTarget): boolean {
     const parentWorld = this.worldPath(parent)
     const childWorld = this.worldPath(child)
-    if (parentWorld.distro !== childWorld.distro) return false
+    if (parentWorld.distro?.toLowerCase() !== childWorld.distro?.toLowerCase() || parentWorld.username !== childWorld.username) return false
     const parentPath = parentWorld.linuxPath
     const childPath = childWorld.linuxPath
     if (childPath === parentPath) return true
@@ -415,8 +580,10 @@ export class WslFileSystem extends LocalFileSystem {
   }
 
   /** One target's (distro, linuxPath) pair for containment; `undefined` distro = Windows world. */
-  private worldPath(target: FsTarget): { distro: string | undefined; linuxPath: string } {
+  private worldPath(target: FsTarget): { distro: string | undefined; username?: string; linuxPath: string } {
     const key = String(target.targetKey)
+    const native = nativeCoordinate(key)
+    if (native) return { distro: native.distro, linuxPath: native.path, ...native.username === undefined ? {} : { username: native.username } }
     const unc = parseWslUnc(key)
     if (unc !== null) return { distro: unc.distro, linuxPath: unc.linuxPath }
     const mnt = windowsToMntPath(key)
@@ -427,6 +594,21 @@ export class WslFileSystem extends LocalFileSystem {
   override async lstat(path: string, opts?: { cwd?: string }, signal?: AbortSignal): Promise<FsPathInfo | undefined> {
     if (signal?.aborted) throw new FsError('lstat aborted', 'FS_ABORTED')
     if (path.trim().length === 0) throw new FsError('file_path must be a non-empty string', 'FS_NOT_FOUND')
+    const where = this.coordinateForPath(path, opts?.cwd)
+    if (where) return this.nativeCall(async () => {
+      try {
+        const value = await this.nativeClient!.stat(this.rpcTarget(where), where.path, true, { signal })
+        return value === undefined ? undefined : { ...value, version: FsVersion(value.version) }
+      } catch (error) {
+        if (this.fileOptions.backend !== 'auto' || where.username !== undefined || signal?.aborted
+          || !(error instanceof RpcTransportError) || error.stage !== 'startup') throw error
+        return this.lstatUnc(path, opts, signal)
+      }
+    })
+    return this.lstatUnc(path, opts, signal)
+  }
+
+  private async lstatUnc(path: string, opts?: { cwd?: string }, signal?: AbortSignal): Promise<FsPathInfo | undefined> {
     const { input, cwd } = this.translate(path, opts?.cwd)
     const info = await super.lstat(input, { cwd }, signal).catch(() => undefined)
     if (info !== undefined) return info

@@ -29,6 +29,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { resolveRpcConfig, type ResolvedRpcConfig } from './shared/rpc-config.ts'
+import { resolveFileConfig, type FileOptions } from './shared/native-file-config.ts'
 import { rpcDiagnostics } from './shared/rpc-metrics.ts'
 import { cpSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -102,6 +103,8 @@ export interface Config {
   route?: string
   /** Search backend; auto by default, with startup-only fallback. */
   searchTransport?: string
+  /** Native Linux file operations (auto), forced native, or explicit UNC compatibility. */
+  fileBackend?: string
   /** Search/RPC idle lifetime in milliseconds; 120000 by default. */
   searchIdleMs?: number
   /** Bounded in-memory performance statistics (no request data); true by default. */
@@ -835,7 +838,7 @@ async function waitForSubprocess(ctx: Context): Promise<SubprocessProbeFace | un
 async function materializeVariants(
   agentPresets: AgentPresetsService,
   dshHome: string,
-  paths: { shell: string; fs: string; relay: string; node: string; sandbox: string; search: string; jobs: string; bashTool: string; terminalTool: string; image: string; shellMode: 'session' | 'pty'; searchOptions?: ResolvedRpcConfig },
+  paths: { shell: string; fs: string; relay: string; node: string; sandbox: string; search: string; jobs: string; bashTool: string; terminalTool: string; image: string; shellMode: 'session' | 'pty'; searchOptions?: ResolvedRpcConfig; fileOptions?: FileOptions },
   persistentShell: boolean,
   track: (dispose: unknown) => void,
   generation: number,
@@ -933,7 +936,7 @@ async function materializeOne(
   agentPresets: AgentPresetsService,
   preset: AgentPresetRosterEntry,
   userRoot: string,
-  paths: { shell: string; fs: string; relay: string; node: string; sandbox: string; search: string; jobs: string; bashTool: string; terminalTool: string; image: string; shellMode: 'session' | 'pty'; searchOptions?: ResolvedRpcConfig },
+  paths: { shell: string; fs: string; relay: string; node: string; sandbox: string; search: string; jobs: string; bashTool: string; terminalTool: string; image: string; shellMode: 'session' | 'pty'; searchOptions?: ResolvedRpcConfig; fileOptions?: FileOptions },
   persistentShell: boolean,
   track: (dispose: unknown) => void,
   generated: Set<string>,
@@ -947,7 +950,7 @@ async function materializeOne(
     bashPath: paths.bashTool,
     terminalTool: paths.terminalTool,
     mode: paths.shellMode,
-  } : undefined, paths.search, paths.jobs, paths.image, paths.searchOptions)
+  } : undefined, paths.search, paths.jobs, paths.image, paths.searchOptions, paths.fileOptions)
   // 0.1.7-alpha.1+ publishes a variant as a declaration row (the composition is
   // already the exact entry-list dialect the declaration wants, so the only
   // conversion is YAML back to rows); earlier releases still discover one as
@@ -1021,6 +1024,7 @@ export const inject = ['webServer']
 export const Config: z<Config> = z.object({
   route: z.string().default(DEFAULT_ROUTE),
   searchTransport: z.string(),
+  fileBackend: z.string(),
   searchIdleMs: z.number(),
   searchMetrics: z.boolean(),
 })
@@ -1038,6 +1042,7 @@ export function apply(ctx: Context, config: Config): void {
   const resolved = { route: DEFAULT_ROUTE, ...config }
   const searchOptions = resolveRpcConfig({ transport: config?.searchTransport,
     idleMs: config?.searchIdleMs, metrics: config?.searchMetrics })
+  const fileOptions = resolveFileConfig({ backend: config?.fileBackend, idleMs: searchOptions.idleMs, metrics: searchOptions.metrics })
   const dshHome = process.env.DSH_HOME ?? join(homedir(), '.dsh')
   const packageRoot = fileURLToPath(new URL('..', import.meta.url))
   const shellPath = join(packageRoot, 'lib', 'shell.js').replace(/\\/g, '/')
@@ -1163,6 +1168,7 @@ export function apply(ctx: Context, config: Config): void {
           sandbox: sandboxPath,
           search: searchPath,
           searchOptions,
+          fileOptions,
           jobs: jobsPath,
           bashTool: bashToolPath,
           terminalTool: terminalToolPath,
