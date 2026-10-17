@@ -1,8 +1,10 @@
 # Experimental persistent search transport
 
-Status: source implementation with Linux native regression evidence. **Not yet validated on
-Windows/WSL or rebuilt with the pinned DSH dependencies.** The default remains `oneshot`.
-This work is based on `10c992f7b28427383febc54438f5c719fa4fe19e` (phase-one PR).
+Status: implemented and published with rebuilt `lib/` on `perf/phase2-search-transport`.
+The Node 24 build, pinned DSH integration and clean package installation have passed.
+**Windows/WSL validation is still pending.** The default remains `oneshot`.
+This work builds on phase one, including its documentation update at
+`3020a68b77bd55f0345d5f538803d4a4d827135b`.
 
 ## Scope
 
@@ -24,8 +26,9 @@ not rely on Windows/WSL preserving multiline command-line arguments.
 
 ## Enable and revert
 
-Build the modified source with the repository's usual `npm ci` and `npm run build` first.
-An old `lib/` does not acquire this feature merely because its `src/` changed.
+The feature branch includes the rebuilt `lib/`; no source patch or manual build is needed
+when installing that branch. Developers changing source must still run the repository's
+usual `npm ci` and `npm run build` and commit the matching build output.
 
 Set the environment of the **DSH host process**, then restart that process:
 
@@ -79,21 +82,37 @@ On Windows, set `WSL_COMPAT_DISTRO` to the actual distribution for the native te
 The benchmark's `--distro` has the same meaning. On Linux the native tests and benchmark
 launch Python/Bash directly; they do not pretend to measure the Windows boundary.
 
-The `search-performance` workflow now runs transport tests on Linux and Windows/WSL2. It
+The `search-performance` workflow runs transport tests on Linux and Windows/WSL2. It
 also builds the plugin, installs the existing pinned DSH test dependencies and exercises
 `scripts/compatibility/search-real.mjs` with `DSH_WSL_TEST_SEARCH_TRANSPORT=persistent`,
-once against source and once against `lib/`. These added CI paths are not yet run for this
-changeset; phase one's green CI does not verify phase two.
+once against source and once against `lib/`. Its Windows result must be checked separately;
+phase one's green CI does not verify phase two.
 
-## Local evidence
+## Node 24 build and publication
+
+The [delivery run](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39012625533)
+built and tested commit `5ae116962d5d19650b0962bc6f48a21ceb3a2b47` on Node 24.21.0.
+Repeated builds reproduced committed `lib/` byte-for-byte. The unit bucket passed 227
+cases with one existing dependency skip, all 21 transport cases and both native prefilter
+cases passed, and the pinned-host bucket passed 108 cases plus its existing integration
+drivers. Clean npm installation also passed. The type gate retained its **209-error
+baseline**, not a claim of zero project-wide type errors; the existing documentation/seam
+ledgers retain their recorded defects and platform skips.
+
+The run's final push was rejected because the Actions token could not publish workflow
+changes. The GitHub connector then published the exact tested commit successfully; no
+source or build output was changed to evade a test. Temporary delivery files and its
+workflow are absent from the published tree. Neither `main` nor the user's local install
+was changed. Windows compatibility and speedup are not inferred from this Linux run.
+
+## Local development evidence
 
 Linux, Node 22.16.0, Python 3.13.5; 21 transport cases pass, including real FIFO-blocked
 search cancellation, process cleanup, concurrent requests, queued cancellation, overload,
 missing-Python fallback, startup deadlines, protocol faults, identity separation and idle
 recovery. The existing unit bucket: 227 pass, zero fail, one existing host-dependency skip.
 The new transport module closure also passes a separate strict TypeScript check.
-Node 24 remains the package's production requirement; these local readings do not replace
-its pinned Node 24/DSH build or Windows compatibility checks.
+These local readings are a development control, not Windows compatibility evidence.
 
 Alternating A/B, two warm-up pairs discarded, 30 samples per backend, 1,000 unrelated logs:
 
