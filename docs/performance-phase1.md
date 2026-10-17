@@ -59,6 +59,11 @@ its own JSON in `logs/search-benchmark.json`. Four lifecycle regression cases we
 also run against the original provider (4 failures) and the fix (4 passes), so the tests
 demonstrate a change rather than simply asserting the new implementation's shape.
 
+Validation for commit `10c992f7b28427383febc54438f5c719fa4fe19e`: both the
+[full checks workflow](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/38947051211)
+and the [Windows/WSL2 search-performance workflow](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/38947051293)
+completed successfully. These results apply to that commit, not to subsequent changes.
+
 ## Deferred
 
 Persistent RPC, Linux-native file writes, inotify and PTC sandbox changes remain separate
