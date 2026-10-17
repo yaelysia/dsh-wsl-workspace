@@ -64,8 +64,16 @@ jobs:
           additional-packages: python3
       - name: Select and record actual WSL version
         run: |
-          wsl.exe --set-version "$WSL_COMPAT_DISTRO" ${{ matrix.wsl }}
           mkdir -p logs
+          want=${{ matrix.wsl }}
+          # Match the repository's full-matrix provisioning: converting an already
+          # WSL1 instance can return WSL_E_VM_MODE_INVALID_STATE, despite being ready.
+          current=$(wsl.exe -l -v 2>/dev/null | tr -d '\0\r' | sed 's/[[:space:]]*$//' | grep -F "$WSL_COMPAT_DISTRO" | grep -oE '[12]$' || true)
+          if [ "$current" != "$want" ]; then
+            wsl.exe --set-version "$WSL_COMPAT_DISTRO" "$want"
+          fi
+          wsl.exe -l -v 2>/dev/null | tr -d '\0\r' | sed 's/[[:space:]]*$//' | tee logs/distributions.txt
+          grep -F "$WSL_COMPAT_DISTRO" logs/distributions.txt | grep -E "[[:space:]]${want}$"
           wsl.exe -d "$WSL_COMPAT_DISTRO" -e uname -r > logs/kernel.txt
           cat logs/kernel.txt
       - name: Native file contracts, source and committed lib
