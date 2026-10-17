@@ -1,0 +1,33 @@
+name: native-dev-bootstrap
+on:
+  push:
+    branches: [perf/phase4-native-files]
+    paths: [.github/workflows/native-dev-bootstrap.yml]
+permissions:
+  contents: read
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: node ci/install-pinned.mjs
+      - name: Package only pinned development dependencies
+        shell: bash
+        run: |
+          mkdir -p /tmp/native-dev
+          tar -czf /tmp/native-dev/dependencies.tgz node_modules ci/deps/node_modules ci/deps-conflict/node_modules
+          cp "$(command -v node)" /tmp/native-dev/node
+          node --version > /tmp/native-dev/node-version.txt
+          sha256sum /tmp/native-dev/dependencies.tgz /tmp/native-dev/node > /tmp/native-dev/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-dev-dependencies
+          path: /tmp/native-dev/
+          retention-days: 1
