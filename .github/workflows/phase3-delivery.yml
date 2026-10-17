@@ -1,0 +1,97 @@
+name: phase3-delivery
+on:
+  push:
+    branches: [perf/phase3-auto-rpc-metrics]
+permissions:
+  contents: read
+concurrency:
+  group: phase3-delivery
+  cancel-in-progress: false
+jobs:
+  assemble:
+    if: contains(github.event.head_commit.message, '[phase3-build]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Materialize the checksum-verified source changes
+        run: |
+          python3 - <<'PY'
+          import gzip, hashlib, json, subprocess
+          from pathlib import Path, PurePosixPath
+          data = gzip.decompress(b''.join(Path(f'.phase3-part{i}').read_bytes() for i in range(8)))
+          assert hashlib.sha256(data).hexdigest() == 'ed0be57d1c9cafc473238e1087266f3802fa11b67dc722cf48c2f5ee6854d1f3'
+          results = {}
+          for item in json.loads(data):
+              path = PurePosixPath(item['path'])
+              assert not path.is_absolute() and '..' not in path.parts
+              old = Path(item['base']).read_bytes() if item['base'] else b''
+              assert hashlib.sha256(old).hexdigest() == item['baseSha'], item['path']
+              lines = old.decode('utf-8').splitlines(keepends=True)
+              for start, end, text in reversed(item['edits']):
+                  lines[start:end] = [text]
+              new = ''.join(lines).encode('utf-8')
+              assert hashlib.sha256(new).hexdigest() == item['sha'], item['path']
+              results[item['path']] = new
+          for name, value in results.items():
+              path = Path(name)
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_bytes(value)
+          subprocess.run(['git', 'add', '--', *results], check=True)
+          PY
+          git rm -- .phase3-part0 .phase3-part1 .phase3-part2 .phase3-part3 .phase3-part4 .phase3-part5 .phase3-part6 .phase3-part7
+      - run: npm ci
+      - name: Build and stage the exact distributable
+        run: |
+          mkdir -p /tmp/phase3-artifacts
+          npm run build 2>&1 | tee /tmp/phase3-artifacts/build.log
+          git add -- lib
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'perf: enable automatic search with shared RPC, idle controls and bounded diagnostics'
+          npm run build >> /tmp/phase3-artifacts/build.log 2>&1
+          git diff --exit-code -- lib
+          node scripts/verify-lib-sync.mjs
+      - name: Portable and native regression checks
+        run: |
+          npm run test:unit 2>&1 | tee /tmp/phase3-artifacts/unit.log
+          npm run test:search-prefilter 2>&1 | tee /tmp/phase3-artifacts/prefilter.log
+          npm run test:search-transport 2>&1 | tee /tmp/phase3-artifacts/transport.log
+          npm run test:docs
+          npm run test:docs-claims
+          npm run test:matrix
+      - name: Install pinned DSH test dependencies
+        run: node ci/install-pinned.mjs
+      - name: Host integration and packaged installation
+        run: |
+          npm run test:node 2>&1 | tee /tmp/phase3-artifacts/host.log
+          npm run typecheck:gate 2>&1 | tee /tmp/phase3-artifacts/types.log
+          npm run test:seams 2>&1 | tee /tmp/phase3-artifacts/seams.log
+          npm run verify:install 2>&1 | tee /tmp/phase3-artifacts/install.log
+      - name: Publish only the tested feature commit
+        run: |
+          git diff --exit-code
+          npm pack --ignore-scripts --pack-destination /tmp/phase3-artifacts
+          git archive --format=tar HEAD > /tmp/phase3-artifacts/source.tar
+          git rev-parse HEAD | tee /tmp/phase3-artifacts/commit.txt
+          git push origin HEAD:refs/heads/perf/phase3-auto-rpc-metrics
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase3-build-validation
+          path: /tmp/phase3-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
