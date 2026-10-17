@@ -7,6 +7,8 @@ MAX_CONTENT = 16 * 1024 * 1024
 MAX_WIRE = 32 * 1024 * 1024
 committed = False
 cleaning = False
+running = False
+cancel_requested = False
 
 class Failure(Exception):
     def __init__(self, code, message):
@@ -17,7 +19,9 @@ def fail(code, message):
     raise Failure(code, message)
 
 def cancel(signum, frame):
-    if not committed and not cleaning:
+    global cancel_requested
+    cancel_requested = True
+    if running and not committed and not cleaning:
         fail('FS_ABORTED', 'file operation cancelled before publication')
 
 signal.signal(signal.SIGTERM, cancel)
@@ -299,25 +303,47 @@ def run(op, req):
     if op == 'fs.edit': return atomic(path, req, True)
     fail('FS_IO_ERROR', 'unknown file operation')
 
-try:
+def dispatch(op, payload):
+    global committed, cleaning, running
+    # A pooled executor retains code, never a prior operation's state or receipt.
+    committed, cleaning, running = False, False, True
+    try:
+        if cancel_requested: fail('FS_ABORTED', 'file operation cancelled before execution')
+        req = json.loads(payload)
+        value = run(op, req)
+        return {'ok': True, 'committed': committed, 'value': value}, 0
+    except Failure as error:
+        return {'ok': False, 'committed': committed, 'code': error.code, 'message': error.message}, 1
+    except OSError as error:
+        kind = ('FS_NOT_FOUND' if error.errno in (errno.ENOENT, errno.ENOTDIR) else
+                'FS_PERMISSION_DENIED' if error.errno in (errno.EACCES, errno.EPERM) else 'FS_IO_ERROR')
+        return {'ok': False, 'committed': committed, 'code': kind, 'message': errno.errorcode.get(error.errno, 'EIO')}, 1
+    except Exception as error:
+        return {'ok': False, 'committed': committed, 'code': 'FS_IO_ERROR', 'message': str(error)[:1024]}, 1
+    finally:
+        running = False
+
+if sys.argv[1] == '--persistent':
+    # One request at a time per executor. The parent owns a bounded four-executor
+    # pool and retires an executor after cancellation or an incomplete response.
+    while True:
+        cancel_requested = False
+        raw = sys.stdin.buffer.readline(MAX_WIRE + 1)
+        if not raw: break
+        if len(raw) > MAX_WIRE or not raw.endswith(b'\n'):
+            raise ValueError('invalid native executor frame')
+        message = json.loads(raw)
+        os.chdir(message['cwd'])
+        result, code = dispatch(message['op'], message['payload'])
+        data = json.dumps(result, ensure_ascii=False, separators=(',', ':')).encode('utf-8') + b'\n'
+        sys.stdout.buffer.write(str(code).encode('ascii') + data)
+        sys.stdout.buffer.flush()
+        del message, raw, result, data  # Keep no previous request or file-body cache.
+else:
     raw = sys.stdin.buffer.read(MAX_WIRE + 1)
-    if len(raw) > MAX_WIRE: fail('FS_TOO_LARGE', 'native request exceeded its byte limit')
-    req = json.loads(raw)
-    value = run(sys.argv[1], req)
-    result = {'ok': True, 'committed': committed, 'value': value}
-    code = 0
-except Failure as error:
-    result = {'ok': False, 'committed': committed, 'code': error.code, 'message': error.message}
-    code = 1
-except OSError as error:
-    kind = ('FS_NOT_FOUND' if error.errno in (errno.ENOENT, errno.ENOTDIR) else
-            'FS_PERMISSION_DENIED' if error.errno in (errno.EACCES, errno.EPERM) else 'FS_IO_ERROR')
-    result = {'ok': False, 'committed': committed, 'code': kind, 'message': errno.errorcode.get(error.errno, 'EIO')}
-    code = 1
-except Exception as error:
-    result = {'ok': False, 'committed': committed, 'code': 'FS_IO_ERROR', 'message': str(error)[:1024]}
-    code = 1
-sys.stdout.buffer.write((json.dumps(result, ensure_ascii=False, separators=(',', ':')) + '\n').encode('utf-8'))
-sys.stdout.buffer.flush()
-sys.exit(code)
+    if len(raw) > MAX_WIRE: raise ValueError('native request exceeded its byte limit')
+    result, code = dispatch(sys.argv[1], raw)
+    sys.stdout.buffer.write((json.dumps(result, ensure_ascii=False, separators=(',', ':')) + '\n').encode('utf-8'))
+    sys.stdout.buffer.flush()
+    sys.exit(code)
 `

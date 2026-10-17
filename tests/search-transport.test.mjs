@@ -365,3 +365,55 @@ test('wire timing does not require synchronized clocks and metrics can be disabl
     assert.deepEqual(pool.diagnostics().metrics.stages,{})
   } finally {pool.dispose();await runBash('rm -rf -- "$1"',[root],distro)}
 })
+
+// File transactions keep their cancellable process isolation, but reuse a warm
+// Linux interpreter instead of paying imports/startup again for every stat/read.
+test('native file executors reuse interpreters and reset mutation state between requests', async () => {
+  const { NativeFileClient } = await import('../src/shared/native-files.ts')
+  const root = await fixture(2, distro), where = target(root), pool = nativePool()
+  const files = new NativeFileClient(pool)
+  try {
+    const first = await files.resolve(where, '/proc/self')
+    assert.match(first, /^\/proc\/\d+$/)
+    for (let i = 0; i < 10; i++) assert.equal(await files.resolve(where, '/proc/self'), first)
+    const written = await files.write(where, `${root}/reused.txt`, 'alpha\r\n', { kind:'createIfAbsent' }, undefined, 1024)
+    assert.equal((await files.read(where, `${root}/reused.txt`)).toString(), 'alpha\r\n')
+    await assert.rejects(files.write(where, `${root}/reused.txt`, 'forbidden', undefined,
+      { mode:'read-only', roots:[] }, 1024), error => error.code === 'FS_SANDBOX_DENIED')
+    assert.equal((await files.stat(where, `${root}/reused.txt`)).version, written.version)
+    assert.equal(await files.resolve(where, '/proc/self'), first, 'ordinary failures must reset state without replacing the interpreter')
+    await pool.run(target(`${root}/src`), request())
+    assert.equal(await files.resolve(target(`${root}/src`), '/proc/self/cwd'), `${root}/src`)
+    assert.equal(await files.resolve(where, '/proc/self/cwd'), root)
+  } finally { pool.dispose(); await runBash('rm -rf -- "$1"', [root], distro) }
+})
+
+test('native executor frames preserve large replies and an overflow cannot poison the next call', async () => {
+  const { NativeFileClient } = await import('../src/shared/native-files.ts')
+  const root = await fixture(1, distro), where = target(root), pool = nativePool()
+  const files = new NativeFileClient(pool)
+  try {
+    const body = '🙂中文\\\n'.repeat(50000)
+    await files.write(where, `${root}/large.txt`, body, undefined, undefined, 1024)
+    assert.equal((await files.read(where, `${root}/large.txt`)).toString(), body)
+    const overflow = await pool.run(where, request('fs.read', [JSON.stringify({path:`${root}/large.txt`,maxBytes:16*1024*1024})], {maxBytes:128}))
+    assert.equal(overflow.stdout.length, 129)
+    assert.equal(overflow.aborted, false)
+    assert.equal((await files.read(where, `${root}/large.txt`)).toString(), body)
+    assert.equal(pool.snapshot().launches, 1, 'only the private executor is retired, not the WSL connection')
+  } finally { pool.dispose(); await runBash('rm -rf -- "$1"', [root], distro) }
+})
+
+test('pool disposal reaps warm native executors, including idle interpreters', async () => {
+  const { NativeFileClient } = await import('../src/shared/native-files.ts')
+  const root = await fixture(1, distro), pool = nativePool(), files = new NativeFileClient(pool)
+  try {
+    const ids = new Set(await Promise.all(Array.from({length:8}, () => files.resolve(target(root), '/proc/self'))))
+    assert.ok(ids.size <= 4 && ids.size >= 1, 'native executors share the four-slot admission bound')
+    pool.dispose()
+    for (const proc of ids) {
+      await eventually(async () => (await runBash('test ! -d "$1"', [proc], distro)).code === 0,
+        `warm executor ${proc} survived provider disposal`)
+    }
+  } finally { pool.dispose(); await runBash('rm -rf -- "$1"', [root], distro) }
+})

@@ -17,8 +17,12 @@ Native methods are `fs.resolve`, `fs.stat`, `fs.lstat`, `fs.read`, `fs.range`, `
 `fs.write` and `fs.edit`. They use the existing versioned stdio transport and a fixed method
 allow-list. The file provider owns the pool; compatible search-provider settings reuse it
 through `rpcPoolFor`. Different permission realms do not share a global worker singleton.
-Each operation executes a bundled, isolated Python subprocess inside Linux; Windows-to-WSL
-startup is reused, but Python subprocess startup and filesystem work still cost time.
+File operations reuse up to four private Linux Python executors under that same RPC worker.
+One request runs at a time per executor; sequential operations reuse both the Windows-to-WSL
+connection and imported Python code. Cwd, commit/cancellation flags and input/output bodies
+are reset per request, with no retained file-body cache. A cancelled, crashed or malformed
+executor is retired; its in-flight operation is never replayed. Pool disposal/idle expiry
+reaps these children as well. No fork is performed from a multi-threaded interpreter.
 
 No file-body cache, port, installed Linux service or general command-execution RPC is added.
 Windows drive targets, including symlinks resolved onto `/mnt/<drive>`, retain their Windows
@@ -145,3 +149,20 @@ where its host spill had fewer bytes than the persistent-shell result. Native fi
 were not the failing step there. The final PR reports rerun results without disguising an
 initial failure as a pass. No latency assertions or compatibility failures are removed to
 make the build green.
+
+## File-startup regression found by full provider measurements
+
+The first complete Windows A/B (run `39048433397`, commit `7a7a17d549740976d4da5b128ab64578f32aaf21`)
+passed all file contracts but exposed a performance regression in single small-file calls.
+With 3,900-byte content and 200 directory entries, WSL2 native P50 was 82.473 ms for the
+read sequence, 107.221 ms for write and 110.991 ms for edit, versus UNC's 15.487, 59.362
+and 65.519 ms. Listing was much faster: 60.320 versus 2,501.880 ms. WSL1 showed the same
+small-file startup issue. These are historical pre-executor-reuse results, not current
+speedup claims.
+
+Segmented metrics showed Python startup/import work repeating on every resolve, stat and
+read. The warm-executor change removes that repeated work while retaining process-isolated
+cancellation and the complete transactional checks. Regression cases verify real executor
+PID reuse, cwd/receipt-state reset, large framed replies, overflow recovery and cleanup of
+idle child processes. The same source/lib native contract and Windows provider A/B gates
+run again; PR #5 records their exact final commits and measurements.

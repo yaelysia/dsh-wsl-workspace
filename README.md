@@ -101,6 +101,11 @@ timeouts and lost mutation receipts are not reasons to switch backends and write
 Use `fileBackend: unc` and `searchTransport: oneshot` to deliberately return to the original
 paths, then restart the host/start a fresh session.
 
+Native file operations additionally reuse up to four private Linux Python executors per RPC
+worker. These children process one request each at a time, keep no file-body cache and are
+reaped with their owner; cancellation or a damaged reply retires the affected executor
+without replaying the operation. This avoids re-importing Python for every small file call.
+
 ## Behavior notes
 
 - **Bash:** uses the WSL distribution and workspace user. The session tool carries shell state; its supported arguments and differences from the host are listed in [bash parity](docs/bash-parity.md).
