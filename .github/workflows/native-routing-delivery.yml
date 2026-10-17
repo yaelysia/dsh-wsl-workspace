@@ -1,0 +1,84 @@
+name: native-routing-delivery
+on:
+  push:
+    branches: [perf/phase4-native-files]
+    paths: [.github/workflows/native-routing-delivery.yml, .native-routing.patch]
+permissions:
+  contents: read
+jobs:
+  assemble:
+    if: contains(github.event.head_commit.message, '[native-routing-build]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Apply the verified two-file correction
+        run: |
+          echo 'ed24caa5eabcbe612de456ca1b2b484fc5b47d5ece1cd8bfbc7430b65ce44d21  .native-routing.patch' | sha256sum -c -
+          git apply --check .native-routing.patch
+          git apply --index .native-routing.patch
+          test "$(git hash-object src/fs.ts)" = cd78ea01b0f14ce7a2b7846dd28c7a64cb664b20
+          test "$(git hash-object tests/native-files.test.mjs)" = 2def1bc0878a835a326f3b91bf265519e5d0fcbd
+          git rm -- .native-routing.patch
+          cat >> CHECKPOINT.md <<'EOF'
+
+          ## CP1：目录条目跨 Windows 磁盘的路由修复
+
+          原生目录枚举中解析到 `/mnt/<drive>` 的条目现在与直接 `resolve` 使用同一 Windows 后端，并重新取得该后端的版本，避免将 Linux 版本交给 Windows 条件写入。普通 Linux 条目不增加逐文件 RPC。
+
+          新增真实 Windows/WSL 用例覆盖文件链接、目录链接、悬空链接、版本匹配、读取、条件写入、编辑和条件创建。此用例在 Linux 明确跳过，不冒充跨系统验证。源码与配套 lib 在本提交中一起生成；推送前需通过 Node 24 构建、Linux 原生 source/lib、RPC、宿主集成、类型基线及安装检查。Windows 与完整矩阵须检查本提交之后的 PR CI；未完成前不算通过。
+          EOF
+      - run: npm ci
+      - name: Build source and matching distributable
+        run: |
+          mkdir -p /tmp/native-routing
+          npm run build 2>&1 | tee /tmp/native-routing/build.log
+          git add -- lib CHECKPOINT.md
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: keep listed Windows-drive targets backend-pinned with native routing regression'
+          npm run build >> /tmp/native-routing/build.log 2>&1
+          git diff --exit-code -- lib
+          node scripts/verify-lib-sync.mjs
+      - name: Portable, RPC and documentation checks
+        run: |
+          npm run test:unit 2>&1 | tee /tmp/native-routing/unit.log
+          npm run test:search-transport 2>&1 | tee /tmp/native-routing/rpc.log
+          npm run test:search-prefilter
+          npm run test:docs
+          npm run test:docs-claims
+          npm run test:matrix
+      - run: node ci/install-pinned.mjs
+      - name: Native and host contracts before publication
+        run: |
+          npm run test:native-files 2>&1 | tee /tmp/native-routing/native-source.log
+          DSH_WSL_TEST_PLANE=lib npm run test:native-files 2>&1 | tee /tmp/native-routing/native-lib.log
+          npm run test:node 2>&1 | tee /tmp/native-routing/host.log
+          npm run typecheck:gate 2>&1 | tee /tmp/native-routing/types.log
+          npm run test:seams
+          npm run verify:install
+      - name: Publish the tested checkpoint only
+        run: |
+          git diff --exit-code
+          npm pack --ignore-scripts --pack-destination /tmp/native-routing
+          git archive --format=tar HEAD > /tmp/native-routing/source.tar
+          git rev-parse HEAD | tee /tmp/native-routing/commit.txt
+          git push origin HEAD:refs/heads/perf/phase4-native-files
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-routing-build
+          path: /tmp/native-routing/
+          retention-days: 7
