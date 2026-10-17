@@ -1,0 +1,102 @@
+diff --git a/src/fs.ts b/src/fs.ts
+index 4529fdf..616b9c1 100644
+--- a/src/fs.ts
++++ b/src/fs.ts
+@@ -348,11 +348,33 @@ export class WslFileSystem extends LocalFileSystem {
+   override async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {
+     const where = nativeCoordinate(String(target.targetKey))
+     if (!where) return super.listDir(target, signal)
+-    return this.nativeCall(async () => (await this.nativeClient!.list(this.rpcTarget(where), where.path, { signal })).map(row => ({
+-      name: row.name, type: row.type as FsDirEntry['type'], target: this.targetFor({ ...where, path: row.path }),
+-      ...row.version === undefined ? {} : { version: FsVersion(row.version) },
+-      ...row.type === 'file' && row.size !== undefined ? { size: row.size } : {},
+-    })))
++    return this.nativeCall(async () => {
++      const rows = await this.nativeClient!.list(this.rpcTarget(where), where.path, { signal })
++      const entries: FsDirEntry[] = []
++      for (const row of rows) {
++        if (signal?.aborted) throw new FsError('listDir aborted', 'FS_ABORTED')
++        const drive = mntToWindowsPath(row.path)
++        if (drive === null) {
++          entries.push({
++            name: row.name, type: row.type as FsDirEntry['type'], target: this.targetFor({ ...where, path: row.path }),
++            ...row.version === undefined ? {} : { version: FsVersion(row.version) },
++            ...row.type === 'file' && row.size !== undefined ? { size: row.size } : {},
++          })
++          continue
++        }
++        // A listed Linux symlink may physically point onto a Windows drive.
++        // Match resolve() routing and observe the version through that backend;
++        // carrying a Linux version into a guarded Windows write would be stale.
++        const mapped = await this.resolveUnc(drive, signal === undefined ? undefined : { signal })
++        const info = await super.stat(mapped, signal)
++        entries.push({
++          name: row.name, type: info?.type ?? 'other', target: mapped,
++          ...info === undefined ? {} : { version: info.version },
++          ...info?.type === 'file' ? { size: info.size } : {},
++        })
++      }
++      return entries
++    })
+   }
+ 
+   override async watch(target: FsTarget, changed: (error?: Error) => void, signal: AbortSignal): Promise<() => Promise<void>> {
+diff --git a/tests/native-files.test.mjs b/tests/native-files.test.mjs
+index 267e094..2def1bc 100644
+--- a/tests/native-files.test.mjs
++++ b/tests/native-files.test.mjs
+@@ -7,7 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises'
+ import { Context } from '@deepseek-ai/cordis'
+ import { LocalFileSystem } from '@deepseek-ai/dsh-fs-local'
+ import { FsVersion } from '@deepseek-ai/dsh-fs'
+-import { joinUnc } from '../src/shared/paths.ts'
++import { joinUnc, windowsToMntPath } from '../src/shared/paths.ts'
+ import { WslRpcPool } from '../src/shared/rpc-transport.ts'
+ import { RPC_METHODS } from '../src/shared/rpc-metrics.ts'
+ import { NativeFileClient, NATIVE_MAX_BYTES } from '../src/shared/native-files.ts'
+@@ -183,6 +183,45 @@ test('native symlinks resolve physically, lstat does not follow, and dangling wr
+   await assert.rejects(fs.resolve('loop'), codeIs('FS_IO_ERROR'))
+ })
+ 
++test('listed Windows-drive links keep the same backend and versions as direct resolution',
++  { skip: !windows && 'requires the real Windows file backend and a WSL mount' }, async t => {
++    const { fs, root } = await fixture(t)
++    const host = await hostReference(t)
++    await host.write('mounted.txt', 'before\n')
++    const driveFile = windowsToMntPath(host.fs.processPath(await host.fs.resolve('mounted.txt')))
++    const driveDir = windowsToMntPath(host.fs.processPath(await host.fs.resolve('.')))
++    assert.ok(driveFile); assert.ok(driveDir)
++    await python('import os,sys;root,file,directory=sys.argv[1:];os.symlink(file,root+"/mounted.txt");os.symlink(directory,root+"/mounted-dir");os.symlink(file+"-missing",root+"/missing.txt")',
++      [root, driveFile, driveDir])
++    await writeRaw(`${root}/linux.txt`, 'native')
++    const rows = await fs.listDir(await fs.resolve(root))
++    assert.ok(nativeCoordinate(String(rows.find(row => row.name === 'linux.txt').target.targetKey)))
++    for (const name of ['mounted.txt', 'mounted-dir', 'missing.txt']) {
++      const row = rows.find(entry => entry.name === name)
++      assert.ok(row, name)
++      const direct = await fs.resolve(name)
++      assert.equal(nativeCoordinate(String(row.target.targetKey)), undefined, name)
++      assert.equal(row.target.targetKey, direct.targetKey, name)
++      const info = await fs.stat(direct)
++      assert.equal(row.type, info?.type ?? 'other', name)
++      assert.equal(row.version, info?.version, name)
++      if (info?.type === 'file') assert.equal(row.size, info.size, name)
++    }
++    assert.equal((await fs.lstat('mounted.txt')).type, 'symlink', 'lstat still describes the Linux link')
++    const file = rows.find(row => row.name === 'mounted.txt')
++    assert.equal(await fs.readText(file.target), 'before\n')
++    const written = await fs.writeText(file.target, 'written\n', replace(file.version))
++    await assert.rejects(fs.writeText(file.target, 'stale', replace(file.version)), codeIs('FS_STALE_VERSION'))
++    await fs.editText(file.target, { oldString: 'written', newString: 'edited', replaceAll: false },
++      { version: written.version })
++    assert.equal((await host.read('mounted.txt')).toString(), 'edited\n')
++    const directory = rows.find(row => row.name === 'mounted-dir')
++    assert.ok((await fs.listDir(directory.target)).some(row => row.name === 'mounted.txt'))
++    const missing = rows.find(row => row.name === 'missing.txt')
++    await fs.writeText(missing.target, 'created', create)
++    assert.equal((await host.read('mounted.txt-missing')).toString(), 'created')
++  })
++
+ test('native policy denies outside, case-confusable and retargeted paths without side effects', async t => {
+   const { fs, root } = await fixture(t)
+   await python('import os,sys;p=sys.argv[1];os.makedirs(p+"/Workspace");os.makedirs(p+"/workspace");open(p+"/workspace/out","w").write("outside");os.symlink(p+"/workspace",p+"/Workspace/link")', [root])
