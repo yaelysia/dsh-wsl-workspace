@@ -1,5 +1,8 @@
 # dsh-wsl-workspace
 
+> 이 번역은 업스트림 버전의 스냅샷입니다. 네이티브 파일 기능이 포함된 현재 포크의 설치와 설정은 최신 영어 또는 중국어 README를 참고하세요.
+> [Current fork](https://github.com/yaelysia/dsh-wsl-workspace) · [English](README.md) · [中文](README.zh.md)
+
 [![dsh.so security](https://www.dsh.so/badge/dsh-wsl-workspace.svg)](https://www.dsh.so/artifact/dsh-wsl-workspace)
 [![dsh.so install](https://www.dsh.so/badge/install/dsh-wsl-workspace.svg)](https://www.dsh.so/artifact/dsh-wsl-workspace)
 

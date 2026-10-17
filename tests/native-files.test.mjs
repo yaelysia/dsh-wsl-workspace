@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Context } from '@deepseek-ai/cordis'
 import { LocalFileSystem } from '@deepseek-ai/dsh-fs-local'
@@ -17,6 +20,20 @@ const replace = version => ({ kind: 'replaceIfVersion', version })
 const create = { kind: 'createIfAbsent' }
 async function fixture(t, options) { const f = await makeFixture(options); t.after(() => f.cleanup()); return f }
 const targetOf = root => ({ wslPath: 'wsl.exe', distro, linuxCwd: root })
+
+// LocalFileSystem requires its native host substrate (Win32 DACLs on Windows).
+// Never use a bare LocalFileSystem on a WSL UNC path as the edit oracle: its
+// publication can fail before the text contract is exercised. The native side
+// still runs on real Linux; bytes and outcomes are compared across both disks.
+async function hostReference(t) {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-file-reference-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  return {
+    fs: new LocalFileSystem(new Context(), { cwd: root, diffBasisMaxBytes: 1024 * 1024 }),
+    write: (name, bytes) => writeFile(join(root, name), bytes),
+    read: name => readFile(join(root, name)),
+  }
+}
 
 // No mock filesystem: these run the bundled Python program, filesystem provider and real Linux I/O.
 test('native provider creates parents, returns fresh versions and keeps observations backend-pinned', async t => {
@@ -38,12 +55,12 @@ test('native provider creates parents, returns fresh versions and keeps observat
 })
 
 test('native reads preserve bytes; strict UTF-8, BOM and sampled binary rules match the host', async t => {
-  const { fs, root, cwd } = await fixture(t)
-  const host = new LocalFileSystem(new Context(), { cwd: windows ? cwd : root, diffBasisMaxBytes: 1024 * 1024 })
+  const { fs, root } = await fixture(t)
+  const hostData = await hostReference(t), host = hostData.fs
   const cases = [Buffer.from('\ufeff中文\r\n🙂\n'), Buffer.from([0x61, 0xff]), Buffer.from('abc\0def'),
     Buffer.concat([Buffer.alloc(9000, 97), Buffer.from([0])]), Buffer.alloc(0)]
   for (let i = 0; i < cases.length; i++) {
-    const name = `read-${i}.txt`; await writeRaw(`${root}/${name}`, cases[i])
+    const name = `read-${i}.txt`; await writeRaw(`${root}/${name}`, cases[i]); await hostData.write(name, cases[i])
     const target = await fs.resolve(name), reference = await host.resolve(name)
     assert.deepEqual(Buffer.from(await fs.readBytes(target, undefined, cases[i].length)), cases[i])
     const outcomes = await Promise.allSettled([fs.readText(target), host.readText(reference)])
@@ -76,8 +93,8 @@ test('native stream handles UTF-8 split boundaries and refuses a changed file be
 })
 
 test('native exact edit matches pinned host newline, BOM, ambiguity and not-found semantics', async t => {
-  const { fs, root, cwd } = await fixture(t)
-  const host = new LocalFileSystem(new Context(), { cwd: windows ? cwd : root, diffBasisMaxBytes: 1024 * 1024 })
+  const { fs, root } = await fixture(t)
+  const hostData = await hostReference(t), host = hostData.fs
   const cases = [
     ['\ufeffalpha\r\nalpha\r\n', { oldString: 'alpha\n', newString: 'beta\n', replaceAll: true }],
     ['a\ra\r', { oldString: 'a', newString: 'b', replaceAll: true }],
@@ -91,16 +108,17 @@ test('native exact edit matches pinned host newline, BOM, ambiguity and not-foun
   for (let i = 0; i < cases.length; i++) {
     const [body, edit] = cases[i]
     const a = `native-edit-${i}`, b = `host-edit-${i}`
-    await writeRaw(`${root}/${a}`, body); await writeRaw(`${root}/${b}`, body)
+    await writeRaw(`${root}/${a}`, body); await hostData.write(b, body)
     const native = await fs.resolve(a), local = await host.resolve(b)
     const outcomes = await Promise.allSettled([fs.editText(native, edit), host.editText(local, edit)])
-    assert.equal(outcomes[0].status, outcomes[1].status, `case ${i}`)
+    assert.equal(outcomes[0].status, outcomes[1].status,
+      `case ${i}: native=${outcomes[0].reason?.message ?? 'ok'}; host=${outcomes[1].reason?.message ?? 'ok'}`)
     if (outcomes[0].status === 'fulfilled') {
       assert.equal(outcomes[0].value.before, outcomes[1].value.before)
       assert.equal(outcomes[0].value.after, outcomes[1].value.after)
       assert.equal((await fs.stat(native)).version, outcomes[0].value.version)
     } else assert.equal(outcomes[0].reason.code, outcomes[1].reason.code, `case ${i}`)
-    assert.deepEqual(await readRaw(`${root}/${a}`), await readRaw(`${root}/${b}`), `stored bytes case ${i}`)
+    assert.deepEqual(await readRaw(`${root}/${a}`), await hostData.read(b), `stored bytes case ${i}`)
   }
 })
 

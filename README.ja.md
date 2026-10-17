@@ -1,5 +1,8 @@
 # dsh-wsl-workspace
 
+> この翻訳は上流版のスナップショットです。ネイティブファイル機能を含む現在の fork の導入・設定は、更新された英語版または中国語版を参照してください。
+> [Current fork](https://github.com/yaelysia/dsh-wsl-workspace) · [English](README.md) · [中文](README.zh.md)
+
 [![dsh.so security](https://www.dsh.so/badge/dsh-wsl-workspace.svg)](https://www.dsh.so/artifact/dsh-wsl-workspace)
 [![dsh.so install](https://www.dsh.so/badge/install/dsh-wsl-workspace.svg)](https://www.dsh.so/artifact/dsh-wsl-workspace)
 
