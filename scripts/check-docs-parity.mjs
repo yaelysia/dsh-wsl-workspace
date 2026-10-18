@@ -30,13 +30,15 @@ const FILES = {
     install: '## Install', compatibility: '## Compatibility', usage: '## Usage',
     behaviour: '## Behavior notes', changelog: '## Changelog', docs: '## Documentation',
     licence: '## License & attribution', acknowledgments: '## Acknowledgments',
-    performance: '## Phase-one performance work',
+    configuration: '## Configuration', limits: '## Native file guarantees and limits',
+    performance: '## Diagnostics and performance',
   },
   'README.zh.md': {
     install: '## 安装', compatibility: '## 兼容性', usage: '## 使用',
     behaviour: '## 行为与权限说明', changelog: '## 更新日志', docs: '## 相关文档',
     licence: '## 许可与出处', acknowledgments: '## 致谢',
-    performance: '## 第一阶段性能优化',
+    configuration: '## 配置', limits: '## 原生文件保证与边界',
+    performance: '## 诊断与性能',
   },
   'README.ja.md': {
     install: '## インストール', compatibility: null, usage: '## 使い方',

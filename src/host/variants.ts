@@ -1,3 +1,4 @@
+import type { FileOptions } from '../shared/native-file-config.ts'
 import type { ResolvedRpcConfig } from '../shared/rpc-config.ts'
 /**
  * WSL preset-variant generator. For every healthy source preset the roster
@@ -221,6 +222,7 @@ function wslWorldGroup(
   sawJobs = false,
   imagePath?: string,
   searchOptions?: ResolvedRpcConfig,
+  fileOptions?: FileOptions,
 ): string {
   return [
     '# ── WSL execution world (dsh-wsl-workspace variant) ─────────────────────',
@@ -241,6 +243,10 @@ function wslWorldGroup(
     `      name: '${shellPath.replace(/'/g, "''")}'`,
     '    - id: fs-wsl',
     `      name: '${fsPath.replace(/'/g, "''")}'`,
+    ...(fileOptions === undefined ? [] : [
+      '      config:', `        backend: '${fileOptions.backend}'`,
+      `        idleMs: ${fileOptions.idleMs}`, `        metrics: ${fileOptions.metrics}`,
+    ]),
     ...(persistent === undefined
       ? []
       : [
@@ -308,8 +314,12 @@ function wslWorldGroup(
   ].join('\n')
 }
 
-/** The sentence appended to a standard-like persona when the variant runs in WSL. */
-const PERSONA_APPEND = ' Your working directory {{cwd}} is inside a WSL (Windows Subsystem for Linux) distribution: the bash tool and the file read/write/edit tools use Linux paths, and the Windows filesystem is reachable as /mnt/<drive> for file migration.'
+/**
+ * Static WSL guidance: do not introduce runtime prompt variables. Newer hosts
+ * provide cwd as runtime context, not a registered deployment-persona variable.
+ * The source persona's own variables remain untouched.
+ */
+const PERSONA_APPEND = ' Your working directory is inside a WSL (Windows Subsystem for Linux) distribution: the bash tool and the file read/write/edit tools use Linux paths, and the Windows filesystem is reachable as /mnt/<drive> for file migration.'
 
 /** The upstream local-skill provider row, whose watcher cannot watch a UNC share. */
 const SKILL_FILESYSTEM_ROW = 'skill-filesystem'
@@ -525,6 +535,7 @@ export function transformPresetForWsl(
   jobsPath?: string,
   imagePath?: string,
   searchOptions?: ResolvedRpcConfig,
+  fileOptions?: FileOptions,
 ): string {
   const lines = source.split('\n')
   const spans = topLevelSpans(lines)
@@ -572,7 +583,7 @@ export function transformPresetForWsl(
   if (source.includes('tool-jobs')) sawJobs = true
   const result = [...kept]
   if (result.length > 0 && result[result.length - 1] !== '') result.push('')
-  result.push(wslWorldGroup(shellPath, fsPath, sawEditor, persistent, sawSearch ? searchPath : undefined, jobsPath, sawJobs, imagePath, searchOptions))
+  result.push(wslWorldGroup(shellPath, fsPath, sawEditor, persistent, sawSearch ? searchPath : undefined, jobsPath, sawJobs, imagePath, searchOptions, fileOptions))
   return result.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '\n')
 }
 

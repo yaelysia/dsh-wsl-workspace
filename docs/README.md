@@ -1,5 +1,7 @@
 # Documentation index
 
+Current fork: [native file operations and their boundaries](performance-phase4.md), [RPC configuration/diagnostics](performance-phase3.md), and the [current English](../README.md) / [中文](../README.zh.md) installation guides. Older design records describe their named release, not necessarily the native backend.
+
 Where each document lives, what language it is in, and whether it still describes
 the current build. Naming rule: `kebab-case`, with a `.zh` suffix when the text is
 Chinese (English carries no suffix). Superseded documents move to

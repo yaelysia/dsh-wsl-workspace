@@ -1,86 +1,227 @@
 # dsh-wsl-workspace
 
-[![dsh.so security](https://www.dsh.so/badge/dsh-wsl-workspace.svg)](https://www.dsh.so/artifact/dsh-wsl-workspace)
-[![dsh.so install](https://www.dsh.so/badge/install/dsh-wsl-workspace.svg)](https://www.dsh.so/artifact/dsh-wsl-workspace)
+[English](README.md) · [中文](README.zh.md) · [Upstream translations](#documentation) · [Continuation checkpoint](CHECKPOINT.md)
 
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Español](README.es.md) · [Português](README.pt.md) · [Русский](README.ru.md)
-![alt text](https://raw.githubusercontent.com/dsh-wsl-workspace-maintainers/dsh-wsl-workspace/HEAD/image-3.png)
-Add a WSL workspace from the DeepSeek Harness web GUI and run the whole agent session — bash commands and file reads/writes — inside a local WSL distribution with Linux paths. Nothing needs to be installed inside WSL. The session can reach both WSL and Windows at the same time: bash commands run inside the WSL distribution, while Windows files stay accessible via `/mnt/<drive>` (for example `/mnt/c/Users/...`).
+Keep **DeepSeek Harness on Windows** and work in a **local WSL distribution**. The plugin
+provides WSL workspaces, persistent Bash, native file tools and persistent code search,
+while retaining Windows files through `/mnt/<drive>`.
+
+**This is the enhanced [yaelysia fork](https://github.com/yaelysia/dsh-wsl-workspace),
+built on the [upstream plugin](https://github.com/dsh-wsl-workspace-maintainers/dsh-wsl-workspace).**
+Native files are being delivered on `perf/phase4-native-files` in [PR #5](https://github.com/yaelysia/dsh-wsl-workspace/pull/5).
+The upstream npm package and an unmerged `main` do **not** contain these changes.
+The development package still carries the upstream version number; use its branch/commit,
+not that number, to identify the build.
+
+| Operation | Linux workspace | Windows drive |
+|---|---|---|
+| Text/byte/stream reads, directory listing | Native Linux I/O over shared RPC | Existing Windows backend |
+| Write and exact-string edit | Guarded Linux transaction and atomic publication | Existing Windows backend |
+| `grep` / `glob` | GNU tools over persistent RPC (`auto`) | WSL accesses the mounted drive |
+| `bash` / interactive terminal | WSL shell under the workspace user | Accessible from WSL |
+| Skill discovery | Existing bounded UNC polling | Existing host behavior |
 
 ## Install
 
-Pick one of the three ways below, then restart `dsh web`:
+### Requirements
+
+Windows DSH, an available local WSL distribution, and **Linux Python 3.8+** for native
+files and persistent RPC. No second DSH, Linux Node installation, pip package, listening
+port or system service is required. Python must already be available as `python3` in the
+distribution; the plugin does not install it automatically.
 
 ```powershell
-# 1) npm package
-dsh plugin --profile web add dsh-wsl-workspace
-
-# 2) GitHub repository (ships the prebuilt lib/, no local build required)
-dsh plugin --profile web add https://github.com/dsh-wsl-workspace-maintainers/dsh-wsl-workspace
-
-# 3) Local directory (development / self-hosted)
-dsh plugin --profile web add D:\path\to\dsh-wsl-workspace
+# Replace Ubuntu with the distribution name shown by wsl -l -v.
+wsl -d Ubuntu --exec python3 --version
 ```
 
-After restarting `dsh web`, a W button appears beside Settings at the sidebar foot.
+### Install this development branch
+
+The branch includes rebuilt `lib/`. There is no source patch to apply or local build step.
+
+```powershell
+$plugin = Join-Path $env:USERPROFILE 'dsh-wsl-workspace'
+git clone --branch perf/phase4-native-files --single-branch https://github.com/yaelysia/dsh-wsl-workspace.git $plugin
+# Windows CLI / Web profile:
+dsh plugin --profile web add $plugin
+```
+
+For DSH Desktop, add that local plugin directory in Desktop's plugin management. Fully
+restart the **host process**, not just a window, after installing or changing environment
+settings. Web and Desktop profiles are separate. Do not enable the upstream package and
+this copy together: both register the same plugin identity.
+
+To update an unchanged checkout, use `git -C $plugin pull --ff-only`, then restart DSH.
+Developers modifying source must run the build and commit matching `lib/`; see [TESTING.md](TESTING.md).
+
+## Usage
+
+Open the **W** button beside Settings, choose a distribution, and enter or browse to an
+absolute Linux directory such as `/home/me/project`. Check the directory, then choose
+**Create & open**. Standard, PTC, Minimal and Creative retain their mode selection through
+WSL variants; tool availability still depends on the selected mode.
+
+The optional username selects the Linux identity for Bash, searches and **native file
+operations**. Leaving it empty uses the distribution's default user. A Windows/UNC file
+operation does not impersonate this Linux user. Workspace selections are stored in
+`<dshHome>/wsl-workspaces.json`.
+
+Linux targets are pinned to their backend, distribution and user when resolved. Changing
+backend/user settings requires a new resolution/session; a file already observed natively
+is never silently rewritten through UNC after an RPC failure. `/mnt/c/...` and `C:\...`
+file targets retain direct Windows access, including Linux symlinks resolving onto a drive.
+Directory listing follows the same routing: drive-backed entries carry Windows target keys
+and Windows-observed versions, not native versions that would break guarded writes.
+
+## Configuration
+
+These are **top-level plugin settings**, not model tool arguments:
+
+```yaml
+fileBackend: auto       # auto | native | unc
+searchTransport: auto   # auto | persistent | oneshot
+searchIdleMs: 120000    # shared RPC idle lifetime, 1000..3600000 ms
+searchMetrics: true     # bounded in-memory file/search/RPC statistics
+```
+
+| Setting | Environment fallback | Behavior |
+|---|---|---|
+| `fileBackend` | `DSH_WSL_FILE_BACKEND` | `auto` prefers native; `native` requires it; `unc` selects compatibility I/O |
+| `searchTransport` | `DSH_WSL_SEARCH_TRANSPORT` | `auto` prefers persistent search; `oneshot` keeps the original launch path |
+| `searchIdleMs` | `DSH_WSL_RPC_IDLE_MS` | Default 120 seconds; busy or queued work is not idle |
+| `searchMetrics` | `DSH_WSL_RPC_METRICS` | Set `false`, or environment `0`, to stop timing collection |
+
+Explicit configuration wins over environment, then defaults. Invalid settings report an
+error. In default presets, files and search share an owner-scoped pool when their idle and
+metrics settings agree; there is no global cross-realm pool. Limits remain four identities
+per pool, four running jobs per worker and sixteen outstanding requests. Idle/LRU disposal
+never evicts busy work.
+
+`auto` fallback is **startup-only**. File fallback can happen before creating a native
+target and only without an explicit Linux username. Permission errors, stale versions,
+timeouts and lost mutation receipts are not reasons to switch backends and write again.
+Use `fileBackend: unc` and `searchTransport: oneshot` to deliberately return to the original
+paths, then restart the host/start a fresh session.
+
+Native file operations additionally reuse up to four private Linux Python executors per RPC
+worker. These children process one request each at a time, keep no file-body cache and are
+reaped with their owner; cancellation or a damaged reply retires the affected executor
+without replaying the operation. This avoids re-importing Python for every small file call.
+
+## Behavior notes
+
+- **Bash:** uses the WSL distribution and workspace user. The session tool carries shell state; its supported arguments and differences from the host are listed in [bash parity](docs/bash-parity.md).
+- **File tools:** native `resolve/stat/lstat/read/list/write/edit` use the shared RPC and preserve Linux path case, literal backslashes and symbolic links. UNC compatibility uses `LocalFileSystem` and `readlink` assistance. Both retain the host file-policy boundary and `FS_SANDBOX_DENIED` errors.
+- **Search:** `wsl-search` keeps GNU grep/find scripts, output framing, exact filtering and result limits. Persistent `auto` removes repeated Windows-to-WSL launches; it does not change ignore or regex semantics into ripgrep semantics.
+- **Skills:** discovery remains on UNC, with a bounded directory walk, at most 32 monitors, approximately 3-second change checks and 30-second rediscovery. Skill bodies are re-read. Native watching/inotify is not part of this change.
+- **Shell lifetime:** persistent shells belong to their agents, not the whole application. Cancellation, timeout recovery and any explicitly announced terminal rerun retain the existing behavior; see [terminal troubleshooting](docs/tty-triage.md).
+- **Interactive input:** `wsl_terminal` opens/sends/reads/signals/closes terminals through `wsl-relay`. A program needing input requires this terminal path; secrets typed there become part of the conversation record.
+- **Tracked jobs:** use `bash_background` with `job_list`, `job_output` and `job_kill`. The session Bash implementation also supports its declared `run_in_background` option; do not infer that an untracked shell `&` is a managed job.
+- **Older hosts:** use the existing one-shot shell fallback where the persistent terminal substrate is absent. Native file support is independently capability-checked; the inherited release list below is not a new test run of every native feature on every historical SDK.
+- **Startup output:** WSL can print a localhost-forwarding warning while a distribution starts. Diagnose a failed tool from its actual status and error, rather than treating this banner alone as failure.
+
+## Native file guarantees and limits
+
+Reads are byte-preserving; text decoding is strict UTF-8 with the host's BOM/binary rules.
+Edits retain the host's exact-match, ambiguity, not-found, newline and before/after outcome
+contract. A conditional create never replaces an existing file, and an observed-version
+write/edit rejects a changed target.
+
+Writes re-authorize the **physical Linux path**, use descriptor-relative/no-follow directory
+traversal, serialize cooperating writers, stage privately in the destination directory, then
+publish atomically. Replacements preserve ordinary permission bits, owner/group and extended
+attributes when the filesystem permits this; preservation failure aborts instead of silently
+broadening access. New files are private (`0600`); privilege bits are not copied. A denied
+operation does not create an outside target. Parent directories already created for an
+otherwise permitted write can remain after a later failure.
+
+Cancellation before publication returns a definite cancellation when acknowledged. If the
+connection/worker disappears after dispatch, the mutation result can be **unknown**: re-read
+and reconcile before retrying. No automatic replay or alternate-backend rewrite occurs.
+These are cooperative version/atomic-publication guarantees, **not** a universal atomic CAS
+against unrelated editors, protection against every hostile concurrent filesystem mutation,
+or a replacement for an OS sandbox.
+
+Complete native reads, writes and edit inputs are bounded to **16 MiB**, with additional
+request/reply byte budgets. Byte-range/stream reads can handle larger files; streams read in
+256 KiB chunks and reject version changes between chunks. Native `watch` is unsupported.
+The underlying filesystem must support the required descriptor, lock and publication
+operations; unsupported filesystems fail rather than weakening write guarantees.
+
+PTC `run_code` still has the existing Windows ACL/WSL-share limitation. Moving file tools
+into Linux does not move the code-execution sandbox. See [native file design and tests](docs/performance-phase4.md).
+
+## Diagnostics and performance
+
+The existing local POST API accepts `{"method":"performance"}` at the configured plugin
+route (default `/wsl-workspace/api`) on the **actual DSH host port**. It reports anonymous
+provider IDs, pool status, launches/fallbacks and timing stages. `file.*` and `rpc.fs.*`
+cover native files; `tool.grep/glob` cover search execution. Counts cover provider lifetime;
+P50/P95 cover the latest **256 samples per stage**. Nested stages must not be added together.
+
+No file paths, usernames, search terms or contents are retained in statistics; nothing is
+written to disk or uploaded. Statistics are not a trace of model/network time or all DSH
+scheduling. They disappear with the provider.
+
+Reproduce file measurements with `npm run bench:native-files -- --iterations 20` on Windows.
+This compares complete provider sequences, not isolated Python syscalls, using alternating
+native/UNC runs and content checks. Linux runs are native-only controls. There is no fixed
+latency gate, and search speedups are not file speedups. Evidence and scope live in the
+[phase-one](docs/performance-phase1.md), [persistent-search](docs/performance-phase2.md),
+[RPC/metrics](docs/performance-phase3.md) and [native-file](docs/performance-phase4.md) records.
+
+### Verified file performance and resuming work
+
+The corrected native-file checkpoint `e9f58fc3` passed native-file, search and full
+compatibility checks. On one Windows/WSL2 fixture, native versus UNC P50 was **3.348 vs
+16.399 ms** for `resolve + stat + read`, **23.614 vs 57.653 ms** for guarded write, and
+**22.297 vs 69.603 ms** for guarded edit. This used 3,900-byte text, two warm-up pairs and
+20 alternating samples per backend; it is not cold-start, model or end-to-end DSH latency.
+
+See [the durable validation record](docs/native-files-validation.md) for WSL1/WSL2 results,
+exact commits, artifact digests and scope. [CHECKPOINT.md](CHECKPOINT.md) is the starting
+point for continuation: completed changes, validated code, remaining boundaries and commands.
+Earlier measurements remain labelled with their own commits rather than being reused as
+results of a later fix.
 
 ## Compatibility
 
-This build declares these DSH releases, each verified on an isolated instance (its own
-`DSH_HOME`, dependencies pinned to that release, the full check suite):
+The manifest inherits this upstream integration release list:
 
 `0.1.0-rc.7` · `0.1.0-rc.8` · `0.1.1-rc.1` · `0.1.1-rc.2` · `0.1.2-rc.1` · `0.1.3-alpha.2` ·
 `0.1.5-rc.1` · `0.1.5-rc.2` · `0.1.7-rc.1` · `0.1.7-rc.2` · `0.2.0-rc.2`
 
-The list mirrors `dsh.compatibility.dshReleases` in `package.json`, and a unit test fails if
-the two drift apart. `0.2.0-rc.2` is the DSH release DSH Desktop `0.2.0-rc.2` ships, so the
-Desktop is covered by the same declaration; the app's help panel (the dialog's "?" button)
-shows the same chips next to the plugin version. The plugin detects the DSH generation at
-runtime and picks the matching API, and a release exposing neither fails loudly instead of
-leaving an empty workspace. A release outside the list usually still works, but is
-unverified.
-
-## Usage
-
-Click the W button beside Settings at the sidebar foot to open the "Add WSL workspace" dialog. Pick a distribution from the list, then browse the directory tree or type an absolute Linux path (for example `/home/me/proj`) — use the Check button to verify the path exists before creating the workspace. The dialog follows the DeepSeek Harness UI language. The username field is optional: leave it empty to run commands as the distribution's default user, or name a Linux user of that distribution to run the session as that user instead (equivalent to `wsl.exe -u <username>`). The username only changes the bash tool's run identity — the file tools go through the Windows-side WSL share and are unaffected. Each workspace's username is kept in `<dshHome>/wsl-workspaces.json`; delete the entry (or recreate the workspace from the dialog) to return to the default user.
-
-Click "Create & open" to start a new session in the workspace. In the new session the bash tool executes commands inside the chosen distribution and `read`/`write`/`edit` operate on WSL files, so every path the model sees is a Linux path. The mode picker keeps working as usual: Standard, PTC, Minimal and Creative each land on their WSL variant automatically (the WSL variant entries in the picker are bilingual, e.g. `WSL · Standard mode（标准模式）`), and Windows files stay reachable from inside the session under `/mnt/<drive>` (for example `/mnt/c/Users/...`). The dialog's "?" button opens a panel with the DSH releases this build declares, how the plugin is used, and the limitations it cannot fix.
-![alt text](https://raw.githubusercontent.com/dsh-wsl-workspace-maintainers/dsh-wsl-workspace/HEAD/image-2.png)
-## Behavior notes
-
-- **bash tool**: runs inside the WSL distribution as the configured username (empty = the distro default user, often `root`), so it can read and write anywhere in the distro. The Windows ACL sandbox cannot wrap `wsl.exe` — its children run on the Linux kernel side — so WSL itself is the isolation boundary and the DSH file policy does not apply to bash.
-- **File tools (`read`/`write`/`edit`)**: go through the Windows-side WSL 9P share; the username field does not affect them. Two seams the host's own provider would supply are re-established inside the WSL world, because a variant mounts this plugin's `fs` provider in the preset's isolate realm where the host's `fs-sandbox` wrapper is not in the call path. **Symlinks**: the share lists a Linux link but cannot resolve it, so a link path used to look like a missing file; `resolve`/`lstat` now ask the distribution (`wsl.exe … readlink -f`) and continue at the real path, and a link is never replaced by a regular file. **The access mode**: `write`/`edit` are fenced by `ctx.sandboxPolicy` exactly as the host backend fences them — the same `writableRoots` allow-list (plus the distribution's `/tmp`, the temp area of the world the session runs in), the same `FS_SANDBOX_DENIED` the tool layer renders as a denial, and the same `sandboxMode` fact it reads for escalation. Because the fence runs after resolution it judges the real path: a link out of the workspace is an outside write and is denied under `workspace-write`. A deployment that mounts no policy service fences nothing, as on the host. **File references** (issue #49): a conversation's file links, a tool row's line reference and the turn tail's changed files all open through the right Sidebar, and the address they carry holds the path exactly as the model wrote it — a Linux path. The host resolves such a path with `node:path.resolve(cwd, path)`, where a POSIX absolute path is root-relative, so the pane used to report the file missing: `/mnt/d/x` landed on the workspace drive (`D:\mnt\d\x`), an in-distribution path under the cwd share's root, and the drvfs mount 9P cannot serve failed with `EPERM`. The client half now translates the address before the Sidebar sees it — `/mnt/<drive>/…` back to `X:\…`, and every other Linux path through the distribution's UNC share, taken from the session's UNC workspace or from the record stored for a `/mnt/<drive>` workspace — which repairs the tab's content and the metadata read under the same address at once. A session the plugin does not treat as WSL-bound keeps its addresses untouched, and an address it cannot rebuild byte-for-byte, or whose distribution is unknown, is passed through rather than guessed at: the host plane offered no hook to use instead, because `fs` and the `workspaceFiles` endpoint belong to other plugins and cordis refuses a second `provide` for a name another fiber owns. Only 0.1.5-rc.1 and later ship a right Sidebar and a document preview at all, so on the six earlier declared releases the hook simply does not install.
-- **File search (`grep`/`glob`)**: the host's discovery suite spawns a packaged *Windows* ripgrep, so a WSL variant used to drop the row and leave the model to search through the shell. The world now mounts its own twin (`src/host/wsl-search.ts` → `lib/wsl-search.js`), which runs the search **inside the distribution**: the tool names, parameter schemas, caps, output schema (`Line N:` grouping, found-count header, capped-result footer), search cards and formatted-result spill all come from `@deepseek-ai/dsh-tool-fs-search`'s own exported pieces, so what the model sees matches the host. `grep` uses the distribution's GNU grep (`-rnIEH -Z`; POSIX ERE — `\d`, `\w`, `\b` and `(?i)` work, lookaround and backreferences do not), skips hidden files and directories plus `node_modules` like ripgrep's defaults do, does **not** read `.gitignore`, expands `{a,b}` into one `--include` per alternative, matches a `include` containing `/` in this process (ripgrep semantics), and fails loudly on a distribution without GNU grep rather than framing unreadable records. `glob` lists with GNU `find` (`-printf` gives each file's mtime without a stat per file) and matches gitignore-style patterns here (`*` never crosses a separator, `**` does, `?`, `[...]`, `{a,b}` and a leading `!` negation), ordering oldest-first exactly as `rg --sort=modified` does. Both search the Linux tree directly — symlinks, permissions and `.gitignore`-free traversal included — never the 9P share, both prune VCS metadata directories, and neither follows a symlink found during recursion, which is ripgrep's default too. Modes whose source preset mounts no search suite (Minimal) gain none.
-- **Skill catalog**: the session's skill catalog is discovered starting at the session cwd's nearest `.git` ancestor (falling back to the cwd itself), then scanning downward for `.dsh/skills` / `.agents/skills` — including nested projects — bounded to 4 directory levels, 64 skill directories and 4096 visited directories. Register the workspace at the project root you work in; if the registered workspace itself sits inside a larger git repository, the scan starts at that repository's root (matching the host's own rule) and sibling projects may surface. A Linux symlink the Windows-side share cannot resolve is resolved through the distribution instead (`wsl.exe … readlink -f`, at most 32 per lookup, four in flight) and the walk continues at the real path, so a project linked in with `ln -s` — and nested projects below it — is discovered and deduplicated by that real path. Skill bodies always load live. The generated preset pins `watch: false` on the `skill-filesystem` row because watching a `\\wsl.localhost\...` path fails, so the plugin polls instead, in two passes. The cheap pass runs every 3 seconds over the skills directories it published and re-stats each skill file: an added, removed or **edited** skill therefore reaches the model's next turn, and an edit is why the stamp matters — the model's catalog is rebuilt only when the registry's revision moves, and a directory listing cannot tell a rewritten `SKILL.md` from an untouched one. The full re-discovery walk runs every 30 seconds, because only a walk can find a skills directory that did not exist before (a new nested project's first `.dsh/skills`, say). Neither pass re-reads a skill body.
-- **Shell lifetime**: `bash` is a **stateful** shell — `cd`, exported variables, activated virtualenvs and background jobs survive between calls. It is one long-lived `bash --norc -i` inside the distribution, started by this plugin (`src/host/wsl-bash-tool.ts` + `src/host/wsl-bash-session.ts` → `lib/wsl-bash-tool.js`) and driven over **pipes**: each command is sent base64-encoded, and the shell answers with a NUL-delimited record carrying that call's nonce and exit code, so completion is an event on a byte channel rather than a pattern matched against a terminal. That is a deliberate replacement of the host's PTY-backed persistent shell, which decided "finished" by finding a sentinel line in the terminal's text and requiring the exit code to be followed immediately by a newline — and an interactive Linux shell repaints that line, which leaves the erased cells as spaces after the sentinel, so the check never fired: three consecutive calls hung 303.8 s each in a real DSH Desktop 0.2.x session before the host wiped the shell (issue #51). The login environment is not lost: the session sources `/etc/profile`, `~/.profile`, `/etc/bash.bashrc` and `~/.bashrc` at startup **with their own output discarded**, and turns history expansion off, so a `!` in a command means what the model wrote. The PTY tier stays reachable with `DSH_WSL_PTY_SHELL=1` for comparing behaviour — that one mounts the host's PTY backend on this plugin's relay (`src/host/wsl-relay.ts` → `lib/wsl-relay.js`, which hands the PTY to `wsl.exe … bash -i`); the world also provides its own no-op `sandbox` capability (`src/host/wsl-sandbox.ts`), because the host's Windows ACL runner cannot read a `\\wsl.localhost\…` path's security descriptor. Commands run inside the distribution and are outside the DSH file policy — WSL is their isolation boundary. **Two consequences of the wrapping are stated in the tool's description**: the shell is one process for the whole Agent, so a `cd` in one call decides where the next call starts — use absolute paths or an explicit `cd`; and a command ending in `&` is backgrounded *inside* the call, which returns immediately with exit code 0 and no output while the real output arrives later, possibly inside the next call's. Write background work as `( long-job > log 2>&1 ) &` on its own line, or use the background-job tool. A terminal is given **by what the process turns out to be doing**: a command that reads the keyboard is caught while it is waiting, stopped, and run again on a pseudo-terminal of its own inside the same call — `script -qec` started inside the session, with the records still written by the frame *outside* it, so escalation cannot reach the protocol (`src/host/wsl-bash-tty.ts`, and the reading itself in `src/host/wsl-bash-starve.ts`). A command that wants its input from a pipe gets it: the call's `stdin` argument travels in the same frame and becomes a file the command reads from (up to 32 KiB; a larger input is refused by name and nothing runs, because a program fed half its input fails in ways that look like the program's fault). Without `stdin` a command reads `/dev/null`, which is what keeps a command's own read from eating the bytes that end the call. Nothing is decided from a command's name any more: the tool takes a second look at the distribution from outside the shell — the process state, `/proc/<pid>/wchan`, whether a terminal is among its descriptors, and whether it is burning CPU — and that is what tells a program waiting for a keystroke apart from one that is working. `tty: true` still asks for a terminal up front and `tty: false` vetoes the re-run; a call that fails on a terminal without matching one of the known shapes says so itself, naming the layer and the one re-run that settles it ([docs/tty-triage.md](docs/tty-triage.md)). **The readings, measured 2026-10-05** (`D:\Temp\issue51-s0\v5-run.txt`): `sh -c 'read x < /dev/tty'` — a program `sh`, so in no list that ever existed — was stopped at 628 ms and answered in 1 760 ms with its own `GOT=`; `sleep 4`, which is equally silent and equally idle, was left alone; `sudo` asking for a password hides its `/proc` entries (it clears its dumpable flag), so it is treated as an unconfirmable wait, gets the longer window, and came back in 2 412 ms with sudo's own words; a 60 000 ms deadline asked for a keyboard wait returned in 1 733 ms. The old rule's cost for the same shapes was the two-minute default plus a session rebuild, and the reason no list is used is measured in the same ticket: `ssh-copy-id` never matched because the scan stopped at a hyphen, and `printf x; vim note.txt` burnt **121 703 ms** because only the first word was read. **Because the re-run is a second execution, the body says so**: a command that had already done something before it reached its prompt has now done it twice. If a call does wedge the shell, the session is rebuilt with the working directory and exported variables replayed into it — and a command that merely ran long is not executed a second time. **The boundary is one shell per agent**: a second agent's `cd`, exported variables, aliases and detached processes are its own, two calls issued at once each settle with their own answer, a rebuild's process sweep stops only the processes carrying its own session token, and when an agent's own scope ends its shell is stopped with it — so several sessions in one window do not pile up shells nobody can cancel. **One precondition is worth knowing before an agent needs root**: this shell is non-interactive, so a `sudo` that asks for a password cannot be answered *here* — it fails in ~100 ms with sudo's own words and the ways out (a person can run it once in the product's right-sidebar terminal tab; the agent's own door is the `wsl_terminal` tool below, where a password the user hands over can be typed; or give the session user `NOPASSWD` in sudoers, or start the session as root with `DSH_WSL_USER`). The door makes such a prompt *answerable*, not answered: the password still has to come from the user, and no probe is run to claim otherwise — sudoers grants are per-command, so a general "does this user have NOPASSWD" answer would be a guess about the command that just failed. **Everything this shell does differently from the host's own `bash` tool is listed in [docs/bash-parity.md](docs/bash-parity.md)**, row by row, and two gates read that table: `tests/wsl-bash-parity.test.ts` compares the declared parameters and output fields against the installed host package, and `scripts/compatibility/bash-parity-real.mjs` runs one probe script through both tools on a real distribution and compares the answers, so an undeclared difference — or a declared one that quietly stopped being true — is a red build rather than a surprise.
-- **Typing into a terminal (`wsl_terminal`)**: a pipe cannot be typed into, so a program that asks a question — `sudo` wanting a password, `ssh` a first-connection fingerprint, a REPL, an editor, a TUI — had no answer the agent could give; it was diagnosed, stopped, and re-run on a one-shot pseudo-terminal just so the model could read the program's own complaint, and the user had to take over. The world now mounts a door the agent can type through: `open` starts an interactive terminal, `send` types text (Enter unless `submit: false`), `read` pages the retained screen, `signal` delivers `SIGINT`/`SIGTERM`/`SIGKILL`/`SIGTSTP`/`SIGHUP` (`SIGINT` is Ctrl-C), `close` ends it, `list` reports what is open. It is the host's own PTY registry and `dsh-terminal-bash` backend pointed at this plugin's relay — the same machinery behind the right sidebar's terminal tab, with the agent's hands on the keyboard instead of a person's — and the shell it starts runs as the **workspace's configured user**, read back from the workspace store because the host builds a PTY child's environment itself and drops every `DSH_*` variable. The pipe `bash` above stays the default for everything else: it carries every byte, while a terminal screen is a 160-column rendering with a bounded scrollback. Three costs are stated rather than hidden: the backend's quiet window is lowered to 1200 ms from its 3000 ms default (the source note is in `src/host/variants.ts`), so a send whose prompt the host does not recognise returns in ~1.2–1.8 s instead of ~3.0–3.6 s; a send reports *which* of the two happened instead of pretending a quiet screen was a prompt; and anything typed is part of the conversation's record, so a password has to come from the user. Measured on a real distribution, both build planes, as `root` and as `ruler` (66/66 cells in `bash-session-real`): `open` 477–490 ms, a typed command answered, **a keystroke typed into a program blocked on `/dev/tty` reaching it** (`GOT=…`), `submit: false` typing without running and the next Enter running it, `SIGINT` ending a `sleep 30` with the shell surviving it, and `close` leaving no `bash -i` behind.
-- **Tracked background jobs**: `bash_background` starts one command in the background and returns a registry job id immediately; the host's `job_list`, `job_output` (incremental reads, status transitions, completion notices) and `job_kill` then work on it exactly as they do for the host's one-shot tool. The row exists because the persistent shell's schema declares only `command`: without a producer, `job_list` always answered "no background jobs" and a `run_in_background: true` argument passed to `bash` was silently ignored — the parameter schema does not forbid extra properties, so nothing reported the mistake. A real session found exactly that. The tool is mounted only alongside the persistent shell; a world that keeps the one-shot bash row already has `run_in_background` on that tool.
-- **Older hosts fall back to a one-shot shell**: the persistent stack is the *host's* code, and on Windows it needs a platform process inspector that only exists from `0.1.0-rc.8` on — in `0.1.0-rc.7` `spawnTerminal` throws `subprocess-local: terminal inspection is unsupported on platform win32` before any process starts, so every `bash` call in that release fails outright (grep/glob, which never touch the PTY, keep working). The plugin therefore *probes* the substrate at startup instead of assuming: it hands `spawnTerminal` a program that cannot exist, which reaches the inspector check and nothing else — no process is created either way, and the rejection says which half failed. When the answer is "no inspector", the generated world keeps the one-shot `dsh-tool-bash` row (this plugin's own `ctx.shell` provider, no PTY) and the model gets a working, stateless shell instead of an error on every call. `0.1.0-rc.7` is the only declared release in that state; every later one gets the persistent shell.
-- The garbled `localhost` port-forwarding banner `wsl.exe` prints to stderr when the distro was not running yet is harmless.
+It is kept in sync with `package.json`. Historical evidence is in
+[compatibility-evidence.md](docs/compatibility-evidence.md). This native-file phase uses
+Node 24 and the pinned DSH `0.2.0-rc.2` packages, with Linux and Windows/WSL1/WSL2 source/lib
+checks. [PR #5](https://github.com/yaelysia/dsh-wsl-workspace/pull/5) records the exact tested
+commit and current results; a green historical release entry is not fresh validation of
+this fork's new backend. Unlisted host releases and the user's installed Desktop build
+require their own verification.
 
 ## Changelog
 
-The full release history — every version, newest first — lives in [CHANGELOG.md](CHANGELOG.md) ([中文](CHANGELOG.zh.md)); this README keeps only the current behaviour described above.
+[CHANGELOG.md](CHANGELOG.md) and [CHANGELOG.zh.md](CHANGELOG.zh.md) retain the upstream release
+history. The linked performance records and feature PRs describe unreleased fork changes.
 
 ## Documentation
 
-[docs/README.md](docs/README.md) indexes what lives where and in which language: the [design record](docs/design.zh.md) (zh), the [per-release compatibility evidence](docs/compatibility-evidence.md) behind the `dsh.compatibility.dshReleases` declaration, and the [archived](docs/archive/) notes whose banners name what superseded them. Before a change or a release, follow [TESTING.md](TESTING.md).
+[docs/README.md](docs/README.md) is the index; [TESTING.md](TESTING.md) defines build and test
+requirements. English and Chinese READMEs describe this fork. The other translations are
+explicitly marked upstream snapshots, not instructions for the native-file branch:
+[日本語](README.ja.md), [한국어](README.ko.md), [Français](README.fr.md), [Deutsch](README.de.md),
+[Español](README.es.md), [Português](README.pt.md), [Русский](README.ru.md).
 
 ## License & attribution
 
-MIT — see [LICENSE](LICENSE) and [NOTICE](NOTICE). The NOTICE precisely lists:
-
-- **Adapted/inherited source code**: DeepSeek Harness (MIT) — `dsh-bash-local` (executor mechanics), `dsh-fs-local` (`WslFileSystem` subclasses it), and the shipped agent presets (read and transformed by the variant generator);
-- **Design references (no source copied)**: [dsh-bash-terminal](https://github.com/MAXeaglet/dsh-bash-terminal) (MIT, wsl argv / WSLENV approach), [dsh-side-panel](https://github.com/ccq1/dsh-side-panel) (BSD-3-Clause, host-route pattern), [vpshub](https://github.com/Sdongmaker/vpshub) (MIT, roadmap reference).
-
-Keep `LICENSE` and `NOTICE` when redistributing.
+MIT. Keep [LICENSE](LICENSE) and [NOTICE](NOTICE) when redistributing. This fork builds on
+[dsh-wsl-workspace](https://github.com/dsh-wsl-workspace-maintainers/dsh-wsl-workspace) and
+adapts DeepSeek Harness filesystem/executor contracts. The native transaction implementation
+and copied/adapted portions are identified in NOTICE; design references remain separately
+credited. No new dependency license is implied by this README rewrite.
 
 ## Acknowledgments
 
-Special thanks to [dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-whale) (DSH Web 鲸鱼娘 skin series · 深海女仆工坊 maid-atelier, CC BY-NC-SA 4.0): the whale girl skin plugin brings a full set of adorable skins to the DeepSeek Harness Web UI and makes daily use of DSH a warmer experience.
-
-## Phase-one performance work
-
-Search now uses conservative native basename prefilters before the raw-output cap, compiles each host matcher once, and sorts only matched paths. Unsupported patterns keep the existing path. Skill catalog eviction retires its monitor too; cached and invalidated roots share a bounded 32-monitor lifecycle. See [scope, benchmarks and regression checks](docs/performance-phase1.md).
-
-**Automatic persistent search:** `grep/glob` now default to `auto`, with startup-only fallback when Python is unavailable. Top-level plugin settings `searchTransport`, `searchIdleMs` (default 120000) and `searchMetrics` control the backend, idle lifetime and bounded in-memory statistics. See [RPC controls and diagnostics](docs/performance-phase3.md).
+Thanks to the upstream maintainers and the projects credited in NOTICE. The upstream
+[dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-whale) UI theme acknowledgment is
+retained; that separate project uses CC BY-NC-SA 4.0 and is not included in this plugin.

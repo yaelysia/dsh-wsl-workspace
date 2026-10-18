@@ -1,7 +1,8 @@
 /** Bounded, in-memory timing counters. No paths, user identities, arguments or file contents. */
 export type Outcome = 'ok' | 'error' | 'aborted' | 'overflow'
-export type RpcMethod = 'grep' | 'glob' | 'fs.metadata'
-export type TimingKey = `tool.${'grep' | 'glob'}` | `oneshot.${'grep' | 'glob'}`
+export const RPC_METHODS = ['grep', 'glob', 'fs.metadata', 'fs.resolve', 'fs.stat', 'fs.lstat', 'fs.read', 'fs.range', 'fs.list', 'fs.write', 'fs.edit'] as const
+export type RpcMethod = typeof RPC_METHODS[number]
+export type TimingKey = `file.${'resolve' | 'stat' | 'lstat' | 'read' | 'range' | 'list' | 'write' | 'edit'}` | `tool.${'grep' | 'glob'}` | `oneshot.${'grep' | 'glob'}`
   | `rpc.${RpcMethod}.${'total' | 'ready' | 'roundTrip' | 'queue' | 'execute'}`
 const WINDOW = 256
 interface Bucket { count: number; cursor: number; samples: number[]; outcomes: Record<Outcome, number> }
@@ -12,7 +13,7 @@ export class RpcMetrics {
   record(key: TimingKey, milliseconds: number, outcome: Outcome = 'ok'): void {
     if (!this.enabled || !Number.isFinite(milliseconds) || milliseconds < 0) return
     // A fixed grammar, not caller labels: diagnostics cannot retain high-cardinality request data.
-    if (!/^(tool|oneshot)\.(grep|glob)$|^rpc\.(grep|glob|fs\.metadata)\.(total|ready|roundTrip|queue|execute)$/.test(key)) return
+    if (!/^(tool|oneshot)\.(grep|glob)$|^file\.(resolve|stat|lstat|read|range|list|write|edit)$|^rpc\.(grep|glob|fs\.(metadata|resolve|stat|lstat|read|range|list|write|edit))\.(total|ready|roundTrip|queue|execute)$/.test(key)) return
     let bucket = this.buckets.get(key)
     if (!bucket) {
       bucket = { count: 0, cursor: 0, samples: [], outcomes: { ok: 0, error: 0, aborted: 0, overflow: 0 } }
@@ -42,6 +43,6 @@ export function registerRpcDiagnostics(snapshot: () => unknown): () => void {
   return () => { providers.delete(id) }
 }
 export function rpcDiagnostics() {
-  return { scope: 'search-tool-execution-and-rpc; not model latency or UNC file IO',
+  return { scope: 'search-and-native-file-execution-and-rpc; not model latency or UNC file IO',
     providers: [...providers].map(([id, snapshot]) => ({ id, ...snapshot() as object })) }
 }

@@ -113,7 +113,7 @@ test('standard-like transform drops world rows and injects the WSL realm', () =>
   assert.ok(out.includes(`name: '${SHELL}'`), 'shell provider path present')
   assert.ok(out.includes(`name: '${FS}'`), 'fs provider path present')
   assert.ok(out.includes('isolate:\n    shell: true\n    fs: true'), 'realm isolates shell+fs')
-  assert.ok(out.includes('Your working directory {{cwd}} is inside a WSL'), 'persona amended')
+  assert.ok(out.includes('Your working directory is inside a WSL'), 'persona amended')
   assert.ok(!out.includes('persistent-shell'), 'no persistent shell for standard-like')
   assert.ok(!out.includes('search-wsl'), 'no search row without a search path to mount')
 })
@@ -445,7 +445,7 @@ test('v0.1.3+ persona shape: the note joins the inline suffix sentence', () => {
   const out = transformPresetForWsl(SUFFIX_PREFIX_LIKE, SHELL, FS)
   assert.match(
     out,
-    /suffix: >-\n {6}Your working directory is \{\{cwd\}\}\.\n {6}Your working directory \{\{cwd\}\} is inside a WSL/,
+    /suffix: >-\n {6}Your working directory is \{\{cwd\}\}\.\n {6}Your working directory is inside a WSL/,
     'inline suffix folded into a block scalar carrying the note',
   )
   assert.ok(out.includes('prefix: >-\n      You are a coding agent'), 'prefix left untouched')
@@ -463,7 +463,7 @@ test('v0.1.3+ persona shape: a folded suffix block takes the note as a sibling l
 `, SHELL, FS)
   assert.match(
     out,
-    /suffix: >-\n {6}Your working directory is \{\{cwd\}\}\.\n {7}Your working directory \{\{cwd\}\} is inside a WSL/,
+    /suffix: >-\n {6}Your working directory is \{\{cwd\}\}\.\n {7}Your working directory is inside a WSL/,
     'note appended inside the folded suffix',
   )
   assert.equal(out.match(/suffix:/g)?.length, 1, 'suffix header not duplicated')
@@ -487,14 +487,14 @@ test('a prefix-only persona is still amended', () => {
     prefix: >-
       You are a coding agent.
 `, SHELL, FS)
-  assert.match(out, /prefix: >-\n {6}You are a coding agent\.\n {7}Your working directory \{\{cwd\}\} is inside a WSL/, 'note appended to the folded prefix')
+  assert.match(out, /prefix: >-\n {6}You are a coding agent\.\n {7}Your working directory is inside a WSL/, 'note appended to the folded prefix')
 })
 
-test('legacy text personas keep the exact appended line they always had', () => {
+test('legacy text personas retain host variables without adding a cwd dependency', () => {
   const out = transformPresetForWsl(STANDARD_LIKE, SHELL, FS)
-  // Byte-for-byte what the pre-0.1.3 path produced: the block's own indentation
-  // plus the fragment's leading space.
-  assert.match(out, /\n {7}Your working directory \{\{cwd\}\} is inside a WSL/, 'legacy append unchanged')
+  // Preserve the host's text and indentation; only the plugin-owned note changes.
+  assert.ok(out.includes('directory is {{cwd}}.'), 'host-provided cwd is not rewritten')
+  assert.match(out, /\n {7}Your working directory is inside a WSL/, 'legacy append keeps its indentation')
 })
 
 /** A composition carrying the upstream local-skill provider row. */
@@ -587,3 +587,24 @@ test('the pty tier still reaches the host stack when asked for', () => {
   assert.ok(out.includes(`shellPath: '${NODE}'`), 'the relay interpreter is still handed to the backend')
   assert.ok(!out.includes('id: bash-wsl'), 'and our tool is not mounted alongside it')
 })
+
+
+// Desktop 0.2.1-rc.2 registers provider/model, not cwd, in the deployment persona.
+// The adapter must not introduce a variable that the source never needed.
+for (const field of ['prefix', 'suffix', 'text']) {
+  for (const block of [false, true]) {
+    test(`WSL ${field} (${block ? 'block' : 'inline'}) introduces no prompt variables`, () => {
+      const value = 'Model {{model}} from {{provider}}.'
+      const source = `- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    ${field}: ${block ? `>-\n      ${value}` : value}
+`
+      const out = transformPresetForWsl(source, SHELL, FS)
+      assert.ok(out.includes('Your working directory is inside a WSL'))
+      assert.ok(out.includes('file read/write/edit tools use Linux paths'))
+      assert.deepEqual(out.match(/\{\{\w+\}\}/g), source.match(/\{\{\w+\}\}/g))
+      assert.ok(!out.includes('{{cwd}}'))
+    })
+  }
+}
