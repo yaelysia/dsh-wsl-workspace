@@ -4,7 +4,7 @@
 
 **DSH 留在 Windows，项目留在本机 WSL。** 插件提供 WSL 工作区、持久 Bash、原生文件工具和常驻代码搜索，同时保留 `/mnt/<drive>` 对 Windows 文件的访问。
 
-**这是 [yaelysia 增强分支](https://github.com/yaelysia/dsh-wsl-workspace)**，基于 [上游插件](https://github.com/dsh-wsl-workspace-maintainers/dsh-wsl-workspace) 开发。原生文件功能位于 `perf/phase4-native-files`，见 [PR #5](https://github.com/yaelysia/dsh-wsl-workspace/pull/5)。**上游 npm 包及尚未合并的 `main` 不包含这些改动。** 开发包暂沿用上游版本号，请用分支或提交 SHA 区分构建，不要只看版本号。
+**这是 [yaelysia 增强版本](https://github.com/yaelysia/dsh-wsl-workspace)**，基于 [上游插件](https://github.com/dsh-wsl-workspace-maintainers/dsh-wsl-workspace) 开发。四阶段改进、原生文件功能及 Desktop 提示词修复现已通过 [PR #5](https://github.com/yaelysia/dsh-wsl-workspace/pull/5) 全部合入 **`main`**，可以直接安装本仓库主分支。**上游同名 npm 包不包含这些改动。** 开发包暂沿用上游版本号，请用安装来源或提交 SHA 区分构建，不要只看版本号。
 
 | 操作 | Linux 工作区 | Windows 磁盘 |
 |---|---|---|
@@ -25,13 +25,21 @@ Windows 版 DSH、可用的本机 WSL 发行版，以及原生文件和常驻 RP
 wsl -d Ubuntu --exec python3 --version
 ```
 
-### 安装当前开发分支
+### 安装主分支
 
-分支中包含重建后的 `lib/`，不需要手工打补丁或自行构建。
+在 Windows DSH 的「插件 → 添加插件／安装第三方插件」中填写：
+
+```text
+git+https://github.com/yaelysia/dsh-wsl-workspace.git#main
+```
+
+已安装同名插件时，先记录原来源与配置，再从插件页面卸载旧副本后安装；不要删除整个 DSH 配置目录。主分支包含重建后的 `lib/`，不需要手工打补丁或自行构建。
+
+也可以先检出同一主分支，再安装本地目录：
 
 ```powershell
 $plugin = Join-Path $env:USERPROFILE 'dsh-wsl-workspace'
-git clone --branch perf/phase4-native-files --single-branch https://github.com/yaelysia/dsh-wsl-workspace.git $plugin
+git clone --branch main --single-branch https://github.com/yaelysia/dsh-wsl-workspace.git $plugin
 # Windows CLI / Web 配置：
 dsh plugin --profile web add $plugin
 ```

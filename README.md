@@ -8,9 +8,10 @@ while retaining Windows files through `/mnt/<drive>`.
 
 **This is the enhanced [yaelysia fork](https://github.com/yaelysia/dsh-wsl-workspace),
 built on the [upstream plugin](https://github.com/dsh-wsl-workspace-maintainers/dsh-wsl-workspace).**
-Native files are being delivered on `perf/phase4-native-files` in [PR #5](https://github.com/yaelysia/dsh-wsl-workspace/pull/5).
-The upstream npm package and an unmerged `main` do **not** contain these changes.
-The development package still carries the upstream version number; use its branch/commit,
+The four improvement stages, including native files and the Desktop persona fix, are now
+merged into **`main`** through [PR #5](https://github.com/yaelysia/dsh-wsl-workspace/pull/5).
+Install this repository's main branch; the upstream npm package does **not** contain these changes.
+The development package still carries the upstream version number; use its source/commit,
 not that number, to identify the build.
 
 | Operation | Linux workspace | Windows drive |
@@ -35,13 +36,23 @@ distribution; the plugin does not install it automatically.
 wsl -d Ubuntu --exec python3 --version
 ```
 
-### Install this development branch
+### Install from main
 
-The branch includes rebuilt `lib/`. There is no source patch to apply or local build step.
+In Windows DSH's plugin page, choose **Add plugin / Install third-party plugin** and enter:
+
+```text
+git+https://github.com/yaelysia/dsh-wsl-workspace.git#main
+```
+
+If the same package is already installed, record its source/settings, uninstall that copy
+through the plugin page, then install the source above. Do not delete the whole DSH profile.
+Main includes rebuilt `lib/`; no manual source patch or local build is required.
+
+Alternatively, install a local checkout of the same main branch:
 
 ```powershell
 $plugin = Join-Path $env:USERPROFILE 'dsh-wsl-workspace'
-git clone --branch perf/phase4-native-files --single-branch https://github.com/yaelysia/dsh-wsl-workspace.git $plugin
+git clone --branch main --single-branch https://github.com/yaelysia/dsh-wsl-workspace.git $plugin
 # Windows CLI / Web profile:
 dsh plugin --profile web add $plugin
 ```

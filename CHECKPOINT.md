@@ -1,14 +1,16 @@
 # 原生文件阶段检查点 / Continuation checkpoint
 
-## 当前状态：原生文件已实现，Desktop 提示词阻断已修复
+## 当前状态：四阶段改进与 Desktop 提示词修复已合入 main
 
-工作分支：`perf/phase4-native-files`；[PR #5](https://github.com/yaelysia/dsh-wsl-workspace/pull/5)，基于第三阶段 `8d8b3a7c5b88cb1096eaed4d757f86586959505f`。
+续做与安装基线：`main`。原工作分支 `perf/phase4-native-files` 保留作历史检查点；[PR #5](https://github.com/yaelysia/dsh-wsl-workspace/pull/5) 已合并。
 
+- 2026-10-18 按用户明确要求，将 PR #1、#3、#4、#5 按依赖顺序合入 `main`，保留 merge commit 和原提交历史；未强推、未删除历史分支。
+- 主分支完整合并提交：`10e22b906fa5ff3436c47b22520741a5526c9822`。合并后的文件树为 `c52268a2ace4b4301abb76d659d65aa02eacaee6`，与已验证功能分支 `0fb7c16c6b44cb2388a9130b745031abb40c0201` 完全一致。随后仅同步中英文 README 安装入口和本检查点，不修改生产代码或 `lib/`。
 - 最新生产修复及配套 `lib/`：`677a2178b16a443746460e3b62e0415278d3b566`，仅移除插件追加提示语中未注册的 `{{cwd}}`，保留原预设变量和其余 WSL 指导。
-- 此修复已经 [Node 24 交付验证](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39115027757) 后推送；最终文档/常规 CI 收尾没有再修改运行时代码。当前提交的追加 CI 以 PR #5 检查为准。
+- 合并前已重新确认 `0fb7c16c` 的四套检查全部 success：原生文件 `39115570224`、搜索 `39115570103`、提示词兼容 `39115570124`、完整兼容矩阵 `39115570097`。这些是功能提交的实际检查；不将它们描述为之后文档提交的独立 CI。
 - **未修改的 `0676ed1f` 在用户 Desktop 0.2.1-rc.2 上于调用工具前失败；之后通过的实机结果属于 `0676ed1f` 加本地一行修复。不能登记为原提交全通过。** 见 [脱敏 UAT 与修复记录](docs/uat-2026-10-18.md)。
-- 本次 GitHub 修复尚需用户从精确新提交安装后作最小 Desktop 复测；没有远程修改其本机安装。
-- `main`、前序分支未改动，PR 未合并、未发布 npm。版本号仍为开发用 `0.7.7`，以 SHA 区分构建。用 `git log -1 -- CHECKPOINT.md` 查本文档所在提交。
+- 用户反馈固定提交安装失败后要求合并。现在从主分支安装：`git+https://github.com/yaelysia/dsh-wsl-workspace.git#main`。合并不等于已确认该次安装故障的原因；未远程修改用户安装，也未将新主分支登记为用户 Desktop 已再次实测。
+- 未发布 npm。版本号仍为开发用 `0.7.7`，以来源/SHA 区分构建。用 `git log -1 -- CHECKPOINT.md` 查本文档所在提交。
 
 用户指定的原生文件读取、写入、编辑和 README 整理均已落地；不要从第三阶段重新实现，也不要让用户手工应用补丁。
 
@@ -24,6 +26,9 @@
 | CP2 收尾 | `0676ed1fbed7960a7070259f1216699de8cb16d0` | 中英文导航、最终性能与验证范围、机器可读持久证据、接手说明 |
 | CP3 实机验收 | `8ddde35c388c0a8222e25eb482d8c761f683f919` | 登记提示词阻断、原始/本地修复基线差异及未测项；不上传私人日志 |
 | CP4 提示词修复 | `677a2178b16a443746460e3b62e0415278d3b566` | 源码一行修正、配套 lib、六种变量边界回归和真实宿主渲染测试 |
+| CP5 主分支合并 | `10e22b906fa5ff3436c47b22520741a5526c9822` | 四阶段和提示词修复完整合入 main；源码/构建与通过四套检查的功能提交一致 |
+
+本次依赖链的合并提交：PR #1 `75320d44da7d654898a030ccf4b9f1603a73f529` → PR #3 `771934edbb20afe83eeb438e0de89178703c50fb` → PR #4 `df6488e5f126cce1fd62c19f70bdfec9cafd1e79` → PR #5 `10e22b906fa5ff3436c47b22520741a5526c9822`。各 PR 均直接合入 main，而非仅合入中间功能分支。
 
 CP1 的新增回归覆盖文件链接、目录链接、悬空链接、读取、版本保护写入、编辑、过期版本拒绝和条件创建。普通 Linux 条目没有新增逐项 RPC。原生 `lstat` 仍保留 Linux 链接身份。
 
@@ -52,7 +57,7 @@ CP1 的新增回归覆盖文件链接、目录链接、悬空链接、读取、�
 
 ## 接手先读与复现
 
-先读取当前分支 HEAD 和本文件，检查有无新增提交。主要入口：`src/fs.ts`、`src/shared/native-files.ts`、`src/shared/native-file-worker.ts`、`src/shared/rpc-transport.ts`、`src/shared/rpc-worker.ts`。本次提示词入口是 `src/host/variants.ts`、`tests/variants.test.ts`、`tests/persona-render.test.mjs`；文件测试为 `tests/native-files.test.mjs`。完整行为见 [原生合同](docs/performance-phase4.md)。
+先读取 main 的当前 HEAD 和本文件，检查有无新增提交；后续修改从 main 新建工作分支。主要入口：`src/fs.ts`、`src/shared/native-files.ts`、`src/shared/native-file-worker.ts`、`src/shared/rpc-transport.ts`、`src/shared/rpc-worker.ts`。本次提示词入口是 `src/host/variants.ts`、`tests/variants.test.ts`、`tests/persona-render.test.mjs`；文件测试为 `tests/native-files.test.mjs`。完整行为见 [原生合同](docs/performance-phase4.md)。
 
 在 Node 24 的开发/CI 检出环境：
 
@@ -74,7 +79,7 @@ npm run verify:install
 
 ## 尚未做 / 不要扩大完成声明
 
-新 GitHub 构建的 Desktop 安装复测、未列出的宿主版本、主分支合并和正式发布不在已完成验证内。用户已完成的是本地修复后的基本文件/搜索、项目只读操作、工作区切换、取消、空闲回收及重启恢复；忙碌 RPC 超过 120 秒、刻意重叠的混合并发、可选 Windows 挂载测试尚未覆盖。
+新 GitHub 构建的 Desktop 安装复测、未列出的宿主版本和正式发布不在已完成验证内。用户已完成的是本地修复后的基本文件/搜索、项目只读操作、工作区切换、取消、空闲回收及重启恢复；忙碌 RPC 超过 120 秒、刻意重叠的混合并发、可选 Windows 挂载测试尚未覆盖。
 
 实际 Desktop 诊断显示搜索和文件各启动一个 worker；这与同权限域共池的预期存在差异，但不构成已证实的泄漏或功能失败。后续先核查实际服务归属/初始化顺序，不得通过跨权限域全局单例强行合池，也不要把未实现的优化写成已完成。
 
