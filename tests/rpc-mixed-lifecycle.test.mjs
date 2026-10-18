@@ -58,7 +58,8 @@ test('a blocked native write overlaps reads and search, cancels cleanly and perm
   }
   assert.equal((await readRaw(`${f.root}/mixed.txt`)).toString(), 'original needle\n')
   const info = await f.fs.stat(target)
-  const edited = await f.fs.editText(target, { oldText: 'original', newText: 'recovered' }, { version: info.version })
+  assert.ok(info, 'cancelled write must preserve an observable file')
+  const edited = await f.fs.editText(target, { oldString: 'original', newString: 'recovered' }, { version: info.version })
   assert.equal(edited.after, 'recovered needle\n')
   assert.equal(await f.fs.readText(target), 'recovered needle\n')
   assert.equal(stats().pending, 0)
