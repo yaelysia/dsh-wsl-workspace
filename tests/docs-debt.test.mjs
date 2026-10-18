@@ -12,8 +12,7 @@
  *     once — an indentation-anchored regex matched a nested object and a declared red was reported
  *     as already paid.
  *  3. **Both directions of the red arithmetic exist.** A registry whose declared reds are all really
- *     green today cannot be distinguished from one whose debt was paid and left declared, so the
- *     count is asserted to be non-zero *and* the runner's two failure conditions are exercised by
+ *     green today cannot be distinguished from one whose debt was paid and left declared, so explicit synthetic observations exercise the runner's two failure conditions are exercised by
  *     construction: `owed` is a claim that fails, `retired` is one that passes.
  *
  * Run with `node --test --experimental-strip-types tests/docs-debt.test.mjs`.
@@ -21,6 +20,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { classifyObservations } from '../scripts/doc-claim-verdicts.mjs'
 import { subjectExists } from './parity/derive.mjs'
 import {
   APPLICABLE_CLAIMS, APPLICABLE_WATCHED_CONSTANTS, CLAIMS, DECLARED_RED_CLAIMS, GREEN_CLAIMS,
@@ -111,11 +111,10 @@ test('the completeness half is populated', () => {
   }
 })
 
-test('both halves of the registry are populated', () => {
+test('all applicable claims are accounted for even when no debt remains', () => {
   assert.ok(GREEN_CLAIMS.length >= 8,
     `${GREEN_CLAIMS.length} claim(s) must hold; an empty set reports the same green as one that all hold`)
-  assert.ok(DECLARED_RED_CLAIMS.length >= 1,
-    'no declared red is registered, so the runner\'s owed/retired arithmetic is never exercised')
+  assert.equal(GREEN_CLAIMS.length + DECLARED_RED_CLAIMS.length, CHECKED.length)
 })
 
 test('a constant that is not there throws instead of resolving to nothing', () => {
@@ -172,27 +171,39 @@ test('a claim whose subject is absent here is neither passing nor failing', () =
   }
 })
 
-test('the four outcomes a claim can have are all reachable from this registry', async () => {
-  // An earlier version of this file asserted `declared.every(c => c.debt !== null)` and
-  // `GREEN_CLAIMS.every(c => c.debt === null)` and `declared.length + GREEN.length === CLAIMS.length`.
-  // All three hold for *any* `CLAIMS` array, because those two exports are filters of it — a test
-  // that cannot fail is worse than no test, since it reads as coverage. What actually makes the
-  // outcomes reachable is that a real debt exists and is really failing, so that is what is checked:
-  // evaluating every declared red here must either fail (the debt is still owed) or throw (the gate
-  // cannot read its subject). Both are non-green; neither is silently green.
-  assert.ok(DECLARED_RED_CLAIMS.length >= 1, 'no declared red exists, so `owed` and `retired` are unreachable')
+test('the real gate classifier rejects regressions, paid declarations and unevaluated claims', () => {
+  const rows = [
+    { id: 'held', declared: false, evaluated: true, ok: true },
+    { id: 'regression', declared: false, evaluated: true, ok: false },
+    { id: 'owed', declared: true, evaluated: true, ok: false },
+    { id: 'paid', declared: true, evaluated: true, ok: true },
+    { id: 'unreadable', declared: true, evaluated: false, ok: false },
+    { id: 'unreadable-new', declared: false, evaluated: false, ok: false },
+  ]
+  const actual = classifyObservations(rows)
+  assert.deepEqual(Object.fromEntries(Object.entries(actual).map(([key, values]) => [key, values.map(x => x.id)])), {
+    held: ['held'], owed: ['owed'], paid: ['paid'], regressions: ['regression'],
+    unevaluable: ['unreadable', 'unreadable-new'],
+  })
+  assert.equal(classifyObservations(rows.slice(0, 1)).held.length, 1)
+})
+
+test('any remaining declared debt is evaluated and genuinely failing', async () => {
   for (const claim of DECLARED_RED_CLAIMS) {
-    let verdict
-    try {
-      verdict = await claim.run()
-    } catch (error) {
-      // Throwing is the fourth state and the runner reports it as its own red; here it only has to
-      // be distinguished from "passes", which is the mistake that let a broken derivation report
-      // GREEN while printing `could not be evaluated`.
-      assert.fail(`declared red ${claim.id} threw rather than being evaluated: ${error?.message ?? error}`)
-    }
-    assert.equal(verdict.ok, false,
-      `declared red ${claim.id} evaluated as passing — the debt was paid, so remove its declaration `
-      + 'from tests/parity/claims.mjs in the same commit')
+    const verdict = await claim.run()
+    assert.notEqual(verdict.evaluated, false, claim.id)
+    assert.equal(verdict.ok, false, 'retire paid declaration: ' + claim.id)
+  }
+})
+
+test('repaired help statements are required and cannot silently become allowed failures', async () => {
+  for (const id of ['panel-denies-run-in-background', 'panel-claims-a-ten-second-cache']) {
+    const claim = GREEN_CLAIMS.find(item => item.id === id)
+    assert.ok(claim, 'missing required claim: ' + id)
+    assert.equal((await claim.run()).ok, true, id)
+  }
+  for (const dict of [zh, en]) {
+    assert.match(dict['help.usage.body'], /run_in_background: true/)
+    assert.match(dict['help.compat.body'], /CHECKPOINT\.md/)
   }
 })

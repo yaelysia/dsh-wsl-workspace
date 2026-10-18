@@ -404,17 +404,7 @@ export const CLAIMS = [
       { lang: 'zh', pattern: /后台任务/, why: 'the sentence about work that outlives a call' },
       { lang: 'en', pattern: /background job/, why: 'the sentence about work that outlives a call' },
     ],
-    debt: {
-      owed: 'src/client/locales.ts help.usage.body tells the user that `bash` has no '
-        + '`run_in_background` parameter and ignores one. `src/host/wsl-bash-tool.ts` declares the '
-        + 'parameter in `BashArgs`, puts it in the tool\'s `parameters` schema, branches on it to '
-        + 'return `kind: \'background\'`, and the same tool\'s own description tells the model to '
-        + 'pass `run_in_background: true` for work that must outlive one call. The panel contradicts '
-        + 'the tool it documents, and the model reads the other side of that contradiction.',
-      repair: 'Correct the panel sentence in both languages: drop the denial and describe the '
-        + 'parameter, as the tool description already does. Owned by whoever next touches the help '
-        + 'text — this round ships tests only, so the red is declared rather than fixed.',
-    },
+    // Repaired in CP7; keep the claim as a required regression, not an allowed failure.
     async run() {
       const declares = bashSchemaDeclaresRunInBackground()
       if (!declares) {
@@ -443,16 +433,7 @@ export const CLAIMS = [
       { lang: 'zh', pattern: /技能目录/, why: 'the sentence describing skill-catalog discovery' },
       { lang: 'en', pattern: /skill catalog/i, why: 'the sentence describing skill-catalog discovery' },
     ],
-    debt: {
-      owed: 'src/client/locales.ts says the skill catalog is "cached per scan root for 10 seconds". '
-        + 'The skills provider has no TTL: `src/host/wsl-skills.ts` re-checks a served scan root '
-        + 'every `REFRESH_POLL_MS` (3 s) and runs a full re-discovery every `DISCOVERY_POLL_MS` '
-        + '(30 s), and its own comment records that 10 s was the *old* value of the refresh poll '
-        + 'before the two-tier split. The sentence describes a mechanism that was replaced.',
-      repair: 'Restate the sentence as the two cadences it actually has (re-check ~3 s, full '
-        + 're-discovery ~30 s) — the same two numbers `help.known.body` already states. Owned by '
-        + 'whoever next touches the help text.',
-    },
+    // Repaired in CP7; keep the claim as a required regression, not an allowed failure.
     async run() {
       const panel = await panels()
       const hits = []
