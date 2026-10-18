@@ -10,7 +10,7 @@ concurrency:
 jobs:
   linux-native:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,20 +20,25 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: node ci/install-pinned.mjs
-      - name: Source and committed artifact file contracts
+      - name: Source and committed artifact file and lifecycle contracts
         shell: bash
         run: |
           set -o pipefail
           mkdir -p logs
-          npm run test:native-files 2>&1 | tee logs/native-source.log
-          DSH_WSL_TEST_PLANE=lib npm run test:native-files 2>&1 | tee logs/native-lib.log
+          for plane in src lib; do
+            export DSH_WSL_TEST_PLANE=$plane
+            npm run test:native-files 2>&1 | tee logs/native-$plane.log
+            npm run test:rpc-owner 2>&1 | tee logs/owner-$plane.log
+            npm run test:rpc-mixed 2>&1 | tee logs/mixed-$plane.log
+            npm run test:rpc-busy 2>&1 | tee logs/busy-$plane.log
+          done
           npm run test:search-transport
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: native-files-linux
           path: logs/
-          retention-days: 7
+          retention-days: 14
   windows-native:
     strategy:
       fail-fast: false
@@ -66,8 +71,7 @@ jobs:
         run: |
           mkdir -p logs
           want=${{ matrix.wsl }}
-          # Match the repository's full-matrix provisioning: converting an already
-          # WSL1 instance can return WSL_E_VM_MODE_INVALID_STATE, despite being ready.
+          # Converting an already WSL1 instance can report VM_MODE_INVALID_STATE.
           current=$(wsl.exe -l -v 2>/dev/null | tr -d '\0\r' | sed 's/[[:space:]]*$//' | grep -F "$WSL_COMPAT_DISTRO" | grep -oE '[12]$' || true)
           if [ "$current" != "$want" ]; then
             wsl.exe --set-version "$WSL_COMPAT_DISTRO" "$want"
@@ -76,11 +80,16 @@ jobs:
           grep -F "$WSL_COMPAT_DISTRO" logs/distributions.txt | grep -E "[[:space:]]${want}$"
           wsl.exe -d "$WSL_COMPAT_DISTRO" -e uname -r > logs/kernel.txt
           cat logs/kernel.txt
-      - name: Native file contracts, source and committed lib
+      - name: Native files, owner reuse, mixed cancellation and real busy lifetime
         run: |
           set -o pipefail
-          npm run test:native-files 2>&1 | tee logs/native-source.log
-          DSH_WSL_TEST_PLANE=lib npm run test:native-files 2>&1 | tee logs/native-lib.log
+          for plane in src lib; do
+            export DSH_WSL_TEST_PLANE=$plane
+            npm run test:native-files 2>&1 | tee logs/native-$plane.log
+            npm run test:rpc-owner 2>&1 | tee logs/owner-$plane.log
+            npm run test:rpc-mixed 2>&1 | tee logs/mixed-$plane.log
+            npm run test:rpc-busy 2>&1 | tee logs/busy-$plane.log
+          done
       - name: Full provider A/B against UNC (informational, not a latency gate)
         run: node --experimental-strip-types scripts/benchmark-native-files.mjs --iterations 20 --output logs/native-benchmark.json
       - uses: actions/upload-artifact@v4
@@ -89,4 +98,4 @@ jobs:
           name: native-files-wsl${{ matrix.wsl }}
           path: logs/
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 14
