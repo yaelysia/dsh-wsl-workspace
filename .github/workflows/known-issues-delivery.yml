@@ -1,0 +1,70 @@
+name: known-issues-delivery
+on:
+  push:
+    branches: [fix/uat-known-issues]
+permissions:
+  contents: write
+jobs:
+  verify:
+    if: contains(github.event.head_commit.message, '[repair-build]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: node ci/install-pinned.mjs
+      - name: Original must fail for the intended lifecycle reason
+        shell: bash
+        run: |
+          mkdir -p /tmp/known-issues
+          if node --experimental-strip-types --test tests/rpc-owner-lifecycle.test.mjs > /tmp/known-issues/before.log 2>&1; then
+            cat /tmp/known-issues/before.log
+            exit 1
+          fi
+          cat /tmp/known-issues/before.log
+          grep -q 'search must wait for its declared filesystem dependency' /tmp/known-issues/before.log
+      - run: node .ci-known-fixes.mjs
+      - name: Source and built ownership regressions
+        shell: bash
+        run: |
+          npm run test:rpc-owner 2>&1 | tee /tmp/known-issues/owner-source.log
+          npm run build 2>&1 | tee /tmp/known-issues/build.log
+          DSH_WSL_TEST_PLANE=lib npm run test:rpc-owner 2>&1 | tee /tmp/known-issues/owner-lib.log
+      - name: Existing contracts
+        shell: bash
+        run: |
+          npm run test:unit 2>&1 | tee /tmp/known-issues/unit.log
+          npm run test:node 2>&1 | tee /tmp/known-issues/host.log
+          npm run test:search-transport 2>&1 | tee /tmp/known-issues/rpc.log
+          npm run test:native-files 2>&1 | tee /tmp/known-issues/files-source.log
+          DSH_WSL_TEST_PLANE=lib npm run test:native-files 2>&1 | tee /tmp/known-issues/files-lib.log
+          npm run typecheck:gate
+          npm run test:docs
+          npm run test:docs-claims
+      - name: Publish tested source and matching lib only
+        shell: bash
+        run: |
+          git add -- src/host/wsl-search.ts tests/rpc-owner-lifecycle.test.mjs package.json lib
+          git rm -- .ci-known-fixes.mjs
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: bind WSL searches to the ready filesystem owner and rebuild lib'
+          npm run build >> /tmp/known-issues/build.log 2>&1
+          git diff --exit-code -- lib
+          node scripts/verify-lib-sync.mjs
+          git fetch origin fix/uat-known-issues
+          test "$(git rev-parse FETCH_HEAD)" = '${{ github.sha }}'
+          git push origin HEAD:refs/heads/fix/uat-known-issues
+          git rev-parse HEAD > /tmp/known-issues/commit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: known-issues-validation
+          path: /tmp/known-issues
+          retention-days: 14
