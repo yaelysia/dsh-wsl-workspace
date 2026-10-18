@@ -51,7 +51,7 @@ for (const order of ['search-first', 'filesystem-first']) {
     const stats = fs.wslRpcPool.diagnostics()
     assert.equal(stats.launches, 1, 'read/write and search must use the same worker')
     assert.equal(stats.metrics.stages['tool.grep'].count, 1)
-    await searchFiber.dispose()
+    await (await searchFiber).dispose()
     assert.equal(await fs.readText(target), 'owner needle', 'search disposal must not kill its owner pool')
     assert.equal(fs.wslRpcPool.diagnostics().launches, 1)
   })
