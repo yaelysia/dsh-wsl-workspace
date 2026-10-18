@@ -19,7 +19,7 @@ test('a blocked native write overlaps reads and search, cancels cleanly and perm
   const ctx = f.fs.ctx
   t.after(async () => { await ctx.fiber.dispose(); await f.cleanup() })
   const target = await f.fs.resolve('mixed.txt')
-  await f.fs.writeText(target, 'original needle\n', { kind: 'createIfAbsent' })
+  const initial = await f.fs.writeText(target, 'original needle\n', { kind: 'createIfAbsent' })
   const tools = []
   ctx.provide('tools', { register(tool) {
     tools.push(tool)
@@ -29,10 +29,15 @@ test('a blocked native write overlaps reads and search, cancels cleanly and perm
   await ctx.plugin(search, { transport: 'persistent' })
   const unlock = await lockedDirectory(f.root)
   const stop = new AbortController()
-  const blocked = f.fs.writeText(target, 'must never publish', undefined, stop.signal)
+  const blocked = f.fs.writeText(target, 'must never publish',
+    { kind: 'replaceIfVersion', version: initial.version }, stop.signal)
   const rejected = assert.rejects(blocked, codeIs('FS_ABORTED'))
+  // Observe failures immediately while preserving the later assertion.
+  void rejected.catch(() => {})
+  const stats = () => f.fs.wslRpcPool.diagnostics()
   try {
-    await until(() => f.fs.wslRpcPool.snapshot().pending > 0)
+    assert.equal(typeof stats().pending, 'number', 'pending belongs to diagnostics, not the minimal snapshot')
+    await until(() => stats().pending > 0)
     const exec = { agent: { session: { header: { cwd: f.cwd } } }, signal: new AbortController().signal }
     const grep = tools.find(tool => tool.name === 'grep')
     assert.ok(grep, 'the dependent search plugin must be active')
@@ -42,8 +47,8 @@ test('a blocked native write overlaps reads and search, cancels cleanly and perm
     ])
     assert.equal(result[0].matches.length, 1)
     for (const value of result.slice(1)) assert.equal(value, 'original needle\n')
-    assert.equal(f.fs.wslRpcPool.snapshot().launches, 1)
-    assert.ok(f.fs.wslRpcPool.snapshot().pending >= 1, 'the locked write must still be pending during the other work')
+    assert.equal(stats().launches, 1)
+    assert.ok(stats().pending >= 1, 'the locked write must still be pending during the other work')
     stop.abort()
     await rejected
   } finally {
@@ -53,9 +58,9 @@ test('a blocked native write overlaps reads and search, cancels cleanly and perm
   }
   assert.equal((await readRaw(`${f.root}/mixed.txt`)).toString(), 'original needle\n')
   const info = await f.fs.stat(target)
-  const edited = await f.fs.editText(target, { oldText: 'original', newText: 'recovered' }, info.version)
+  const edited = await f.fs.editText(target, { oldText: 'original', newText: 'recovered' }, { version: info.version })
   assert.equal(edited.after, 'recovered needle\n')
   assert.equal(await f.fs.readText(target), 'recovered needle\n')
-  assert.equal(f.fs.wslRpcPool.snapshot().pending, 0)
-  assert.equal(f.fs.wslRpcPool.snapshot().launches, 1)
+  assert.equal(stats().pending, 0)
+  assert.equal(stats().launches, 1)
 })
