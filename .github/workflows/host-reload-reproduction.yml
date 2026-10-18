@@ -1,0 +1,25 @@
+name: host-reload-reproduction
+on:
+  push:
+    branches: [fix/uat-known-issues]
+    paths:
+      - scripts/reproduce-profile-reload.mjs
+      - .github/workflows/host-reload-reproduction.yml
+permissions:
+  contents: read
+jobs:
+  reproduce:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install --prefix .host-current --ignore-scripts --legacy-peer-deps --no-audit --no-fund @deepseek-ai/dsh@0.2.1-rc.2 @deepseek-ai/dsh-scope@0.2.1-rc.2
+      - name: Empty-profile reproduction, no user profile or runtime changes
+        run: node --expose-internals scripts/reproduce-profile-reload.mjs
