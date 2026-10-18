@@ -15,6 +15,7 @@ test('a native mutation stays alive through 125 seconds of busy time at the 120-
   const unlock = await lockedDirectory(f.root)
   const stop = new AbortController()
   const pool = f.fs.wslRpcPool
+  const stats = () => pool.diagnostics()
   const client = new NativeFileClient(pool)
   let settled = false
   const outcome = client.write({ distro, linuxCwd: '/', wslPath: 'wsl.exe' }, path, 'after',
@@ -23,8 +24,9 @@ test('a native mutation stays alive through 125 seconds of busy time at the 120-
       value => { settled = true; return { value } }, error => { settled = true; return { error } })
   const started = Date.now()
   try {
+    assert.equal(typeof stats().pending, 'number')
     const deadline = Date.now() + 5000
-    while (pool.snapshot().pending === 0 && !settled) {
+    while (stats().pending === 0 && !settled) {
       if (Date.now() > deadline) throw new Error('busy mutation did not enter the RPC')
       await delay(10)
     }
@@ -33,18 +35,18 @@ test('a native mutation stays alive through 125 seconds of busy time at the 120-
     // reset the deadline and conceal an erroneous idle eviction of busy work.
     await delay(125000)
     assert.equal(settled, false, 'the held mutation must not time out or be retired as idle')
-    assert.equal(pool.snapshot().workers, 1)
-    assert.equal(pool.snapshot().launches, 1)
-    assert.equal(pool.snapshot().idleReleases, 0)
-    assert.equal(pool.snapshot().pending, 1)
+    assert.equal(stats().workers, 1)
+    assert.equal(stats().launches, 1)
+    assert.equal(stats().idleReleases, 0)
+    assert.equal(stats().pending, 1)
     await unlock()
     const result = await outcome
     if (result.error) throw result.error
     assert.equal(result.value.after, 'after')
     assert.equal((await readRaw(path)).toString(), 'after')
-    assert.equal(pool.snapshot().pending, 0)
+    assert.equal(stats().pending, 0)
     console.log(JSON.stringify({ busyMs: Date.now() - started, idleMs: 120000,
-      launches: pool.snapshot().launches, idleReleases: pool.snapshot().idleReleases, pending: 0 }))
+      launches: stats().launches, idleReleases: stats().idleReleases, pending: 0 }))
   } finally {
     stop.abort()
     await unlock()
