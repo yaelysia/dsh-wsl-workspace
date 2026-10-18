@@ -134,7 +134,7 @@ jobs:
       - name: Actual reported host version, isolated from existing pins
         run: |
           host_root="$RUNNER_TEMP/persona-host"
-          npm install --prefix "$host_root" --ignore-scripts --legacy-peer-deps --no-audit --no-fund @deepseek-ai/dsh@0.2.1-rc.2
+          npm install --prefix "$host_root" --ignore-scripts --legacy-peer-deps --no-audit --no-fund @deepseek-ai/dsh@0.2.1-rc.2 @deepseek-ai/dsh-scope@0.2.1-rc.2
           DSH_WSL_PROMPT_HOST_DIR="$host_root" DSH_WSL_PROMPT_EXPECT_VERSION=0.2.1-rc.2 npm run test:persona 2>&1 | tee /tmp/uat-persona/persona-desktop-version.log
       - name: Publish only the tested feature commit
         run: |
