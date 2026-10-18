@@ -32,6 +32,11 @@ jobs:
               return hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest()
           p = Path('tests/persona-render.test.mjs')
           assert digest(p.read_bytes()) == '3ef0891752b8f348a89bd976d74bffdb8d1f3b5b'
+          p = Path('tests/host-materialize.mjs')
+          assert digest(p.read_bytes()) == '24b2ad0d335a340f1b2fe4d8dd2d99e3d53cd4e4'
+          s = p.read_text().replace(r'Your working directory \{\{cwd\}\} is inside a WSL', r'Your working directory is inside a WSL')
+          assert digest(s.encode()) == '0a46556357f763e213ceea2ae32c3f7d5dbf4651'
+          p.write_text(s)
           p = Path('tests/variants.test.ts')
           assert digest(p.read_bytes()) == 'c2048582cae9c5c3dc7357daf265aa93f311252e'
           s = p.read_text().replace('Your working directory {{cwd}} is inside a WSL', 'Your working directory is inside a WSL')
@@ -101,7 +106,7 @@ jobs:
       - name: Build and stage matching artifacts
         run: |
           npm run build 2>&1 | tee /tmp/uat-persona/build.log
-          git add -- src/host/variants.ts tests/variants.test.ts package.json lib
+          git add -- src/host/variants.ts tests/variants.test.ts tests/host-materialize.mjs package.json lib
           git diff --cached --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
