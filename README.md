@@ -82,3 +82,5 @@ Special thanks to [dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-wha
 ## Phase-one performance work
 
 Search now uses conservative native basename prefilters before the raw-output cap, compiles each host matcher once, and sorts only matched paths. Unsupported patterns keep the existing path. Skill catalog eviction retires its monitor too; cached and invalidated roots share a bounded 32-monitor lifecycle. See [scope, benchmarks and regression checks](docs/performance-phase1.md).
+
+**Experimental persistent search:** after rebuilding, `DSH_WSL_SEARCH_TRANSPORT=auto` opts into a reusable Python-standard-library worker; startup-only fallback preserves installations without Python. The default remains oneshot. See [implementation, controls and validation limits](docs/performance-phase2.md).

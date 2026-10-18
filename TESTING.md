@@ -383,3 +383,13 @@ tree, and `--record` refuses while a banned violation stands.
 - `npm run bench:search -- --distro Ubuntu --files 1000 --iterations 10` emits JSON P50/P95 and raw stdout bytes for a warmed native-script A/B. It creates and removes its own `/tmp/dsh-search-perf-*` fixture; it does not touch a user workspace or time model inference.
 
 See [phase-one scope and interpretation](docs/performance-phase1.md).
+
+## Experimental persistent search tests
+
+`npm run test:search-transport` runs protocol fault/lifecycle checks and actual native
+Python/GNU-script cases. On Windows set `WSL_COMPAT_DISTRO`; Linux runs the same worker
+locally. `npm run bench:search-transport -- --files 1000 --iterations 30` alternates the
+same scripts through oneshot and persistent transports, checks output bytes and emits
+JSON. The `search-performance` workflow tests Linux and WSL2 and then runs the existing
+registered tool contract on source/lib with `DSH_WSL_TEST_SEARCH_TRANSPORT=persistent`.
+See [phase-two scope and validation limits](docs/performance-phase2.md). No timing gate.

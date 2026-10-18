@@ -48,6 +48,7 @@ const BASE_CONFIG = {
   rawOutputMaxBytes: 20_000_000,
   timeoutMs: 30_000,
   wslPath: 'wsl.exe',
+  transport: process.env.DSH_WSL_TEST_SEARCH_TRANSPORT || 'oneshot',
 };
 
 /**
@@ -57,10 +58,12 @@ const BASE_CONFIG = {
  * @param options - an optional formatted-result spill backend to fake.
  * @returns the two tools, a caller and the collected warnings.
  */
+const disposers = [];
 function makeTools(config = {}, options = {}) {
   const registry = new Map();
   const warnings = [];
   apply({
+    effect: setup => { const dispose = setup(); if (typeof dispose === "function") disposers.push(dispose); },
     get: name => name === 'tools'
       ? {register: tool => registry.set(tool.name, tool)}
       : name === 'spillStore' ? options.spillStore : undefined,
@@ -319,6 +322,7 @@ try {
   assert.deepEqual(unionGrep.matches.map(match => match.path).sort(), ['perf/src/main.js', 'perf/src/main.ts']);
   console.log('search prefilter tool contract: selective glob/grep fit the budget; explicit hidden target and multi-hint union preserved');
 } finally {
+  for (const dispose of disposers.reverse()) dispose();
   for (const candidate of [root, outside]) {
     if (path.dirname(candidate) !== linux) throw new Error(`Unexpected fixture root: ${candidate}`);
   }

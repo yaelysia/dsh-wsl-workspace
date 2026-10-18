@@ -41,7 +41,9 @@
     "test:confine-probe": "node --experimental-strip-types tests/support/w78-confine-probe.mjs",
     "test:command-census": "node tests/support/w51-command-census.mjs",
     "test:search-prefilter": "node --experimental-strip-types --test tests/search-prefilter.test.mjs",
-    "bench:search": "node --experimental-strip-types scripts/benchmark-search.mjs"
+    "bench:search": "node --experimental-strip-types scripts/benchmark-search.mjs",
+    "test:search-transport": "node --experimental-strip-types --test tests/search-transport.test.mjs",
+    "bench:search-transport": "node --experimental-strip-types scripts/benchmark-search-transport.mjs"
   },
   "exports": {
     ".": "./lib/index.js",

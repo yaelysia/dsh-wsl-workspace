@@ -64,3 +64,5 @@ workflow's `lint-build` job, and it is registered in bucket A of
 ## Performance work
 
 [Phase-one search and monitor changes](./performance-phase1.md): scope, repeatable benchmarks, and boundaries that remain.
+
+[Experimental phase-two persistent search](./performance-phase2.md): opt-in transport, bounds, fallback, native tests and unverified Windows scope.

@@ -74,6 +74,7 @@ import { decodeWslOutput, defaultDistroSync } from '../shared/wsl.ts'
 import { getWorkspaceUsername } from '../shared/wsl-credentials.ts'
 import { basenameFilters, compileGlob, expandBraces } from '../shared/search-patterns.ts'
 import { GREP_SCRIPT, GLOB_SCRIPT } from '../shared/search-scripts.ts'
+import { SearchWorkerPool, SearchTransportError } from '../shared/search-transport.ts'
 export { expandBraces, globToRegExp, matchGlob } from '../shared/search-patterns.ts'
 
 /** The marker `$0` of both scripts; a fixed string, never a path from the model. */
@@ -129,6 +130,8 @@ export interface Config {
   timeoutMs?: number
   /** The `wsl.exe` executable (absolute path or PATH name). */
   wslPath?: string
+  /** oneshot (default), persistent (requires Python 3), or auto (startup-only fallback). */
+  transport?: string
   /** Distribution used only when the session cwd carries none (a Linux-absolute cwd). */
   distro?: string
 }
@@ -153,6 +156,7 @@ const DEFAULTS: ResolvedConfig = {
   rawOutputMaxBytes: RAW_OUTPUT_MAX_BYTES,
   timeoutMs: SEARCH_TIMEOUT_MS,
   wslPath: 'wsl.exe',
+  transport: 'oneshot',
 }
 
 /** Validated plugin config. */
@@ -166,6 +170,7 @@ export const Config: z<Config> = z.object({
   timeoutMs: z.number().default(DEFAULTS.timeoutMs),
   wslPath: z.string().default(DEFAULTS.wslPath),
   distro: z.string(),
+  transport: z.string(),
 })
 
 /** Services these tools register into. */
@@ -734,12 +739,53 @@ function acceptRun(run: WslRun, toolName: string, rawOutputMaxBytes: number): Bu
  *   this plugin with none, and {@link DEFAULTS} then supplies every knob.
  */
 export function apply(ctx: Context, config?: Config): void {
-  const resolved: ResolvedConfig = { ...DEFAULTS, ...config === undefined ? {} : config }
+  const resolved: ResolvedConfig = { ...DEFAULTS, ...config === undefined ? {} : config,
+    transport: config?.transport ?? process.env.DSH_WSL_SEARCH_TRANSPORT ?? DEFAULTS.transport }
+  if (!['oneshot', 'persistent', 'auto'].includes(resolved.transport)) {
+    throw new Error('wsl-search: transport must be oneshot, persistent, or auto')
+  }
   const tools = ctx.get('tools') as unknown as ToolsRegistryFace | undefined
   if (tools === undefined) return
-  registerGrep(ctx, tools, resolved)
-  registerGlob(ctx, tools, resolved)
+  const executeSearch = createSearchRunner(ctx, resolved)
+  registerGrep(ctx, tools, resolved, executeSearch)
+  registerGlob(ctx, tools, resolved, executeSearch)
   registerGuidance(ctx)
+}
+
+type SearchRunner = (target: WslSearchTarget, op: 'grep' | 'glob', values: readonly string[], signal?: AbortSignal) => Promise<WslRun>
+
+/** The exact existing tool protocol stays above this replaceable execution seam. */
+function createSearchRunner(ctx: Context, config: ResolvedConfig): SearchRunner {
+  const once: SearchRunner = (target, op, values, signal) => runInDistro(
+    buildWslArgv(target, op === 'grep' ? GREP_SCRIPT : GLOB_SCRIPT, values),
+    config.wslPath, config.timeoutMs, config.rawOutputMaxBytes, signal)
+  if (config.transport === 'oneshot') return once
+  // Do not launch resources whose lifetime the host cannot own.
+  if (typeof ctx.effect !== 'function') throw new Error('wsl-search: persistent transport needs a host effect scope')
+  const pool = new SearchWorkerPool()
+  ctx.effect(() => () => pool.dispose())
+  let warned = false
+  return async (target, op, values, signal) => {
+    const where = { ...target, wslPath: config.wslPath }
+    const request = { op, args: values, timeoutMs: config.timeoutMs, maxBytes: config.rawOutputMaxBytes,
+      ...signal === undefined ? {} : { signal } }
+    try {
+      if (config.transport === 'persistent') return await pool.run(where, request)
+      return await pool.runAuto(where, request, (remaining, reason) => {
+        if (!warned) {
+          warned = true
+          console.warn(`wsl-search: persistent startup unavailable; using oneshot: ${reason}`)
+        }
+        return runInDistro(buildWslArgv(target, op === 'grep' ? GREP_SCRIPT : GLOB_SCRIPT, values),
+          config.wslPath, remaining, config.rawOutputMaxBytes, signal)
+      })
+    } catch (error) {
+      if (error instanceof SearchTransportError) {
+        throw new SearchError(error.message, error.code === 'SEARCH_ABORTED' ? 'SEARCH_ABORTED' : 'SEARCH_FAILED')
+      }
+      throw error
+    }
+  }
 }
 
 /**
@@ -748,7 +794,7 @@ export function apply(ctx: Context, config?: Config): void {
  * @param tools - the tool registry.
  * @param config - resolved configuration.
  */
-function registerGrep(ctx: Context, tools: ToolsRegistryFace, config: ResolvedConfig): void {
+function registerGrep(ctx: Context, tools: ToolsRegistryFace, config: ResolvedConfig, executeSearch: SearchRunner): void {
   const caps = {
     maxMatches: config.grepMaxMatches,
     maxLineBytes: config.grepMaxLineBytes,
@@ -815,18 +861,14 @@ function registerGrep(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
       const globs = expandBraces(input.include ?? '')
       const pathShaped = globs.filter(glob => glob.includes('/'))
       const matchers = pathShaped.map(compileGlob)
-      const argv = buildWslArgv(
-        target,
-        GREP_SCRIPT,
-        [
-          input.pattern,
-          pathShaped.length > 0 ? '' : globs.join('\n'),
-          linuxTarget(input.path),
-          String(config.rawOutputMaxBytes + 1),
-          ...(pathShaped.length > 0 ? basenameFilters(pathShaped, true) : []),
-        ],
-      )
-      const run = await runInDistro(argv, config.wslPath, config.timeoutMs, config.rawOutputMaxBytes, exec.signal)
+      const values = [
+        input.pattern,
+        pathShaped.length > 0 ? '' : globs.join('\n'),
+        linuxTarget(input.path),
+        String(config.rawOutputMaxBytes + 1),
+        ...(pathShaped.length > 0 ? basenameFilters(pathShaped, true) : []),
+      ]
+      const run = await executeSearch(target, 'grep', values, exec.signal)
       const stdout = acceptRun(run, 'grep', config.rawOutputMaxBytes)
       const matches: GrepMatch[] = parseGrepRecords(stdout)
         .filter((record) => {
@@ -862,7 +904,7 @@ function registerGrep(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
  * @param tools - the tool registry.
  * @param config - resolved configuration.
  */
-function registerGlob(ctx: Context, tools: ToolsRegistryFace, config: ResolvedConfig): void {
+function registerGlob(ctx: Context, tools: ToolsRegistryFace, config: ResolvedConfig, executeSearch: SearchRunner): void {
   const caps = { maxResults: config.globMaxResults, sampleOverCapGlobResults: config.sampleOverCapGlobResults }
   const overCap = caps.sampleOverCapGlobResults
     ? `a larger result instead returns ${caps.maxResults} paths sampled across top-level entries`
@@ -911,12 +953,8 @@ function registerGlob(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
       if (target === undefined) {
         throw new SearchError('glob is only available in a WSL workspace session', 'SEARCH_FAILED')
       }
-      const argv = buildWslArgv(
-        target,
-        GLOB_SCRIPT,
-        [linuxTarget(input.path), String(config.rawOutputMaxBytes + 1), ...basenameFilters([input.pattern])],
-      )
-      const run = await runInDistro(argv, config.wslPath, config.timeoutMs, config.rawOutputMaxBytes, exec.signal)
+      const values = [linuxTarget(input.path), String(config.rawOutputMaxBytes + 1), ...basenameFilters([input.pattern])]
+      const run = await executeSearch(target, 'glob', values, exec.signal)
       const stdout = acceptRun(run, 'glob', config.rawOutputMaxBytes)
       const listing = parseGlobRecords(stdout)
       const rootAbsolute = listing.root === '' ? target.linuxCwd : listing.root
