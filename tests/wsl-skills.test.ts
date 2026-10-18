@@ -850,3 +850,108 @@ test('parses block scalars in frontmatter', async () => {
   const mixed = skills.find(skill => skill.name === 'mixed')
   assert.equal(mixed?.whenToUse, 'Multi-line\nwhen to use')
 })
+// Use virtual poll ticks: the assertions concern lifecycle, not machine speed.
+const flushPoll = () => new Promise<void>(resolve => setImmediate(resolve))
+
+test('eviction retires the monitor and revisiting the root recreates it', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const root = tree()
+  const reads: string[] = []
+  const base = createIo(root)
+  const lifecycle = new AbortController()
+  t.after(() => lifecycle.abort())
+  const provider = new WslSkillsProvider({ signal: lifecycle.signal, invalidate() {} }, {
+    ...base,
+    readdir: async (path, options) => { reads.push(path); return base.readdir(path, options) },
+  }, 1_000, 1_000)
+  for (let index = 0; index < 33; index += 1) {
+    dir(root, [`p${index}`, '.git'])
+    file(root, [`p${index}`, '.dsh', 'skills', 'a.md'], SKILL_MD('a', 'test'))
+    await provider.list({ cwd: unc(`/p${index}`) })
+  }
+  reads.length = 0
+  t.mock.timers.tick(1_000)
+  await flushPoll()
+  assert.ok(!reads.some(path => path.startsWith(`${unc('/p0')}\\`)), 'evicted root still polls')
+  assert.ok(reads.some(path => path.startsWith(`${unc('/p1')}\\`)), 'retained root stopped polling')
+  await provider.list({ cwd: unc('/p0') })
+  reads.length = 0
+  t.mock.timers.tick(1_000)
+  await flushPoll()
+  assert.ok(reads.some(path => path.startsWith(`${unc('/p0')}\\`)), 'revisited root did not resume')
+  assert.ok(!reads.some(path => path.startsWith(`${unc('/p1')}\\`)), 'next LRU monitor was not retired')
+})
+
+test('invalidated catalogs cannot accumulate monitors outside the cache bound', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const root = tree()
+  const reads: string[] = []
+  const base = createIo(root)
+  const lifecycle = new AbortController()
+  t.after(() => lifecycle.abort())
+  const provider = new WslSkillsProvider({ signal: lifecycle.signal, invalidate() {} }, {
+    ...base,
+    readdir: async (path, options) => { reads.push(path); return base.readdir(path, options) },
+  }, 1_000, 1_000)
+  for (let index = 0; index < 33; index += 1) {
+    dir(root, [`p${index}`, '.git'])
+    file(root, [`p${index}`, '.dsh', 'skills', 'a.md'], SKILL_MD('a', 'test'))
+    await provider.list({ cwd: unc(`/p${index}`) })
+    file(root, [`p${index}`, '.dsh', 'skills', 'b.md'], SKILL_MD('b', 'invalidate'))
+    t.mock.timers.tick(1_000)
+    await flushPoll()
+  }
+  reads.length = 0
+  t.mock.timers.tick(1_000)
+  await flushPoll()
+  assert.ok(!reads.some(path => path.startsWith(`${unc('/p0')}\\`)), 'cache invalidation bypassed the monitor bound')
+  assert.ok(reads.some(path => path.startsWith(`${unc('/p32')}\\`)))
+})
+
+test('a poll completing after disposal does not invalidate the registry', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const root = tree()
+  dir(root, ['p', '.git'])
+  file(root, ['p', '.dsh', 'skills', 'a.md'], SKILL_MD('a', 'test'))
+  const base = createIo(root)
+  const lifecycle = new AbortController()
+  t.after(() => lifecycle.abort())
+  let stalled = false
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  let invalidations = 0
+  const provider = new WslSkillsProvider({ signal: lifecycle.signal, invalidate() { invalidations += 1 } }, {
+    ...base,
+    readdir: async (path, options) => { if (stalled) await gate; return base.readdir(path, options) },
+  }, 1_000, 1_000)
+  await provider.list({ cwd: unc('/p') })
+  file(root, ['p', '.dsh', 'skills', 'b.md'], SKILL_MD('b', 'late'))
+  stalled = true
+  t.mock.timers.tick(1_000)
+  lifecycle.abort()
+  release()
+  await flushPoll()
+  assert.equal(invalidations, 0)
+})
+
+test('a lookup completing after disposal cannot revive its cache or monitor', async t => {
+  const root = tree()
+  dir(root, ['p', '.git'])
+  file(root, ['p', '.dsh', 'skills', 'a.md'], SKILL_MD('a', 'test'))
+  const base = createIo(root)
+  const lifecycle = new AbortController()
+  t.after(() => lifecycle.abort())
+  let release!: () => void
+  let entered!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const reading = new Promise<void>(resolve => { entered = resolve })
+  const provider = new WslSkillsProvider({ signal: lifecycle.signal, invalidate() {} }, {
+    ...base,
+    readFile: async (path, options) => { entered(); await gate; return base.readFile(path, options) },
+  })
+  const pending = provider.list({ cwd: unc('/p') })
+  await reading
+  lifecycle.abort()
+  release()
+  await assert.rejects(pending, { name: 'AbortError' })
+})

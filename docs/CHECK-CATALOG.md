@@ -305,3 +305,16 @@ Deliberate non-coverage, each with its verdict rather than silence:
 - Bucket F (human visual reads) is untouched: the class-name gate proves a rule exists, not that the dialog looks right.
 - A scope limit on the tech-debt seams, stated because it is a weaker harness than the ticket asked for: test A drives the **identical spawn shape** with `node.exe` in place of `npm.cmd` rather than running `scripts/verify-install.mjs` end to end, because that script's failure mode is `npm pack` followed by `npm install` of the tarball and this machine allows no installs. What that does reproduce: the interpreter's re-tokenising, the DEP0190 warning and the split itself are properties of the options object, not of npm. What it does not: that `verify-install.mjs:68` really hands a path-derived argument into that shape is established by reading the line, not by executing it. B/C/D are driven for real, with no such caveat. E inherits A's caveat verbatim (same substituted program, same options object), and the boundary line indicts no product code at all — it measures the host, which is why it is green.
 - One ticket claim was refuted rather than reproduced (`cmd /c mklink /J` on spaced paths succeeds, because Node quotes argv before CreateProcess), and the suite carries that refutation as a green contract line instead of dropping it — a red test asserting a bug that is not there would cost the next reader more than it tells them.
+
+
+## Phase-one runtime performance checks
+
+| Check | Meaning | Runner |
+|---|---|---|
+| `tests/search-patterns.test.ts` | compiled matching and conservative whole-union fallback | `test:unit` |
+| `tests/search-prefilter.test.mjs` | production Bash scripts preserve final matches and avoid unrelated-byte overflow | `test:search-prefilter`, `test:node`, real WSL CI |
+| `tests/wsl-skills.test.ts` lifecycle cases | cache eviction, invalidated-root cap, and in-flight completion after disposal | `test:win32` |
+| `scripts/compatibility/search-real.mjs` selective queries | full registered grep/glob tools preserve hidden-file semantics under a small output budget | real WSL, src + lib planes |
+| `scripts/benchmark-search.mjs` | informational warmed-script latency and byte-volume A/B, not a CI timing threshold | `bench:search`, WSL2 lib-plane CI |
+
+The formerly unbounded monitor finding is addressed by the lifecycle cases above.

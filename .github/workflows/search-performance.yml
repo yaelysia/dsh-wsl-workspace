@@ -1,0 +1,57 @@
+name: search-performance
+on:
+  pull_request:
+    paths:
+      - 'src/shared/search-*.ts'
+      - 'src/host/wsl-search.ts'
+      - 'scripts/benchmark-search.mjs'
+      - 'tests/search-prefilter.test.mjs'
+      - '.github/workflows/search-performance.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: search-performance-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  wsl2-native:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      WSL_COMPAT_DISTRO: Ubuntu-24.04
+      MSYS_NO_PATHCONV: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Both test and benchmark import only Node built-ins and the production
+      # search scripts/matcher, so no npm install or DSH host is required here.
+      - uses: Vampire/setup-wsl@v3
+        with:
+          distribution: Ubuntu-24.04
+          set-as-default: 'true'
+      - name: Explicitly select WSL2 and record the kernel
+        run: |
+          wsl.exe --set-version "$WSL_COMPAT_DISTRO" 2
+          mkdir -p logs
+          wsl.exe -d "$WSL_COMPAT_DISTRO" -e uname -r > logs/kernel.txt
+          cat logs/kernel.txt
+      - name: Native prefilter correctness on Windows to WSL2
+        run: node --experimental-strip-types --test tests/search-prefilter.test.mjs
+      - name: Warmed script A/B (informational, no latency gate)
+        run: |
+          node --experimental-strip-types scripts/benchmark-search.mjs --files 1000 --iterations 10 > logs/search-benchmark.json
+          cat logs/search-benchmark.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: search-performance-wsl2
+          path: logs/
+          if-no-files-found: ignore
+          retention-days: 7

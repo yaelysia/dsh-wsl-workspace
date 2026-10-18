@@ -373,3 +373,13 @@ landed, and it sat inside a budget that was met exactly (212 of 212) — so a pr
 the very method its host calls passed CI. `node scripts/typecheck-gate.mjs --self-test`,
 which `npm run test:node` now runs, proves that second rule bites without needing a broken
 tree, and `--record` refuses while a banned violation stands.
+
+
+## Phase-one performance regressions
+
+- `npm run test:unit` includes `tests/search-patterns.test.ts` (no host packages).
+- `npm run test:win32` includes monitor eviction/disposal races in `tests/wsl-skills.test.ts`.
+- `npm run test:search-prefilter` executes the production GNU scripts on Linux or real WSL on Windows (`WSL_COMPAT_DISTRO`, default `Ubuntu`). It is also called by `test:node`. The existing WSL CI matrix exercises selective queries through the registered tools in `search-real.mjs`, on both source and built-artifact planes.
+- `npm run bench:search -- --distro Ubuntu --files 1000 --iterations 10` emits JSON P50/P95 and raw stdout bytes for a warmed native-script A/B. It creates and removes its own `/tmp/dsh-search-perf-*` fixture; it does not touch a user workspace or time model inference.
+
+See [phase-one scope and interpretation](docs/performance-phase1.md).

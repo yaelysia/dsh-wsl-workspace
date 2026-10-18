@@ -636,6 +636,11 @@ export class WslSkillsProvider {
     // Counted in polls rather than read off the clock: a poll is what the
     // cadence is measured in, and an injected clock (tests) may stand still.
     this.walkEveryPolls = Math.max(1, Math.round(discoveryMs / refreshMs))
+    // One listener per provider, not one retained closure per root ever visited.
+    this.control.signal.addEventListener('abort', () => {
+      for (const key of this.detectors.keys()) this.retire(key)
+      this.cache.clear()
+    }, { once: true })
   }
 
   /**
@@ -664,6 +669,11 @@ export class WslSkillsProvider {
       // drops this entry before the next request can be served from it.
       this.cache.delete(cacheKey)
       this.cache.set(cacheKey, cached)
+      const detector = this.detectors.get(cacheKey)
+      if (detector !== undefined) {
+        this.detectors.delete(cacheKey)
+        this.detectors.set(cacheKey, detector)
+      }
       return [...cached]
     }
     const roots = await discoverSkillRoots(unc.distro, scanRoot, this.io)
@@ -705,11 +715,14 @@ export class WslSkillsProvider {
         })
       }
     }
+    // A disposed or cancelled lookup must not publish a cache or revive a timer.
+    this.control.signal.throwIfAborted()
+    options.signal?.throwIfAborted()
     this.cache.set(cacheKey, candidates)
     while (this.cache.size > CACHE_MAX_ENTRIES) {
       const oldest = this.cache.keys().next().value
       if (oldest === undefined) break
-      this.cache.delete(oldest)
+      this.retire(oldest)
     }
     this.watch(cacheKey, unc.distro, scanRoot, signature.join('\u0002'), roots)
     // A copy, so a caller that mutates the list it got cannot poison the cache.
@@ -740,6 +753,8 @@ export class WslSkillsProvider {
     if (existing !== undefined) {
       existing.signature = signature
       existing.roots = roots
+      this.detectors.delete(cacheKey)
+      this.detectors.set(cacheKey, existing)
       return
     }
     const detector = {
@@ -752,10 +767,21 @@ export class WslSkillsProvider {
     // A pending poll must never hold the host process open (or outlive it).
     if (typeof detector.timer.unref === 'function') detector.timer.unref()
     this.detectors.set(cacheKey, detector)
-    this.control.signal.addEventListener('abort', () => {
-      clearInterval(detector.timer)
-      this.detectors.delete(cacheKey)
-    }, { once: true })
+    // Invalidated catalogs are absent from cache, but still own a watcher.
+    // Bound this map independently so repeated invalidation cannot evade the cap.
+    while (this.detectors.size > CACHE_MAX_ENTRIES) {
+      const oldest = this.detectors.keys().next().value
+      if (oldest === undefined) break
+      this.retire(oldest)
+    }
+  }
+
+  /** Retire the catalog and its monitor as one resource; re-entry discovers afresh. */
+  private retire(cacheKey: string): void {
+    const detector = this.detectors.get(cacheKey)
+    if (detector !== undefined) clearInterval(detector.timer)
+    this.detectors.delete(cacheKey)
+    this.cache.delete(cacheKey)
   }
 
   /** One poll: the cheap pass always, the discovery walk on its own cadence. */
@@ -777,6 +803,8 @@ export class WslSkillsProvider {
         // A transient read failure keeps the last known shape and retries.
         return
       }
+      // A slow poll may finish after eviction, replacement or plugin unload.
+      if (this.control.signal.aborted || this.detectors.get(cacheKey) !== detector) return
       if (signature === detector.signature) return
       detector.signature = signature
       this.cache.delete(cacheKey)

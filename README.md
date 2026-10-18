@@ -78,3 +78,7 @@ Keep `LICENSE` and `NOTICE` when redistributing.
 ## Acknowledgments
 
 Special thanks to [dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-whale) (DSH Web 鲸鱼娘 skin series · 深海女仆工坊 maid-atelier, CC BY-NC-SA 4.0): the whale girl skin plugin brings a full set of adorable skins to the DeepSeek Harness Web UI and makes daily use of DSH a warmer experience.
+
+## Phase-one performance work
+
+Search now uses conservative native basename prefilters before the raw-output cap, compiles each host matcher once, and sorts only matched paths. Unsupported patterns keep the existing path. Skill catalog eviction retires its monitor too; cached and invalidated roots share a bounded 32-monitor lifecycle. See [scope, benchmarks and regression checks](docs/performance-phase1.md).
