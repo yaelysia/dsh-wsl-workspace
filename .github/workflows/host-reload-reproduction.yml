@@ -5,6 +5,10 @@ on:
     paths:
       - scripts/reproduce-profile-reload.mjs
       - .github/workflows/host-reload-reproduction.yml
+  pull_request:
+    paths:
+      - scripts/reproduce-profile-reload.mjs
+      - .github/workflows/host-reload-reproduction.yml
 permissions:
   contents: read
 jobs:
@@ -20,6 +24,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: npm install --prefix .host-current --ignore-scripts --legacy-peer-deps --no-audit --no-fund @deepseek-ai/dsh@0.2.1-rc.2 @deepseek-ai/dsh-scope@0.2.1-rc.2
+      - name: Install isolated reported host and its boot peer closure
+        run: npm install --prefix .host-current --ignore-scripts --legacy-peer-deps --no-audit --no-fund @deepseek-ai/dsh@0.2.1-rc.2 @deepseek-ai/dsh-scope@0.2.1-rc.2 @deepseek-ai/cordis@4.0.4 @deepseek-ai/cordis-plugin-group@1.0.4 @deepseek-ai/cordis-plugin-include@1.0.9 @deepseek-ai/cordis-plugin-loader@1.0.5 @deepseek-ai/dsh-home-paths@0.2.1-rc.2 @deepseek-ai/dsh-launch-environment@0.2.1-rc.2
       - name: Empty-profile reproduction, no user profile or runtime changes
         run: node --expose-internals scripts/reproduce-profile-reload.mjs
