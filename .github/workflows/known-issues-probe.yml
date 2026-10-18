@@ -1,0 +1,22 @@
+name: known-issues-probe
+on:
+  push:
+    branches: [fix/uat-known-issues]
+    paths:
+      - scripts/probe-host-ownership.mjs
+      - .github/workflows/known-issues-probe.yml
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: node ci/install-pinned.mjs
+      - run: npm install --prefix .host-current --ignore-scripts --legacy-peer-deps --no-audit --no-fund @deepseek-ai/dsh@0.2.1-rc.2 @deepseek-ai/dsh-scope@0.2.1-rc.2
+      - run: node --experimental-strip-types scripts/probe-host-ownership.mjs
