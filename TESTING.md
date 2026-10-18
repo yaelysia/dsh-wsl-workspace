@@ -393,3 +393,12 @@ same scripts through oneshot and persistent transports, checks output bytes and 
 JSON. The `search-performance` workflow tests Linux and WSL2 and then runs the existing
 registered tool contract on source/lib with `DSH_WSL_TEST_SEARCH_TRANSPORT=persistent`.
 See [phase-two scope and validation limits](docs/performance-phase2.md). No timing gate.
+
+## Automatic search / shared RPC checks
+
+`tests/rpc-config-metrics.test.mjs` is part of the portable unit bucket. The native transport
+suite also exercises batched metadata on the same worker, idle/LRU policy and v2 negotiation.
+The existing route-envelope seam checks cross-bundle performance visibility, loopback fencing
+and disposal. `search-performance` runs both forced-persistent and unconfigured default-auto
+registered tools on source/lib; it archives per-stage benchmark statistics and all four logs.
+See [phase-three controls and measurement scope](docs/performance-phase3.md).

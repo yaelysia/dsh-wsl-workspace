@@ -41,6 +41,7 @@
  */
 
 import { execFile } from 'node:child_process'
+import { performance } from 'node:perf_hooks'
 import { posix } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -74,7 +75,12 @@ import { decodeWslOutput, defaultDistroSync } from '../shared/wsl.ts'
 import { getWorkspaceUsername } from '../shared/wsl-credentials.ts'
 import { basenameFilters, compileGlob, expandBraces } from '../shared/search-patterns.ts'
 import { GREP_SCRIPT, GLOB_SCRIPT } from '../shared/search-scripts.ts'
-import { SearchWorkerPool, SearchTransportError } from '../shared/search-transport.ts'
+import { WslRpcPool, RpcTransportError } from '../shared/rpc-transport.ts'
+import { resolveRpcConfig, RPC_DEFAULTS } from '../shared/rpc-config.ts'
+import { RpcMetrics, registerRpcDiagnostics, type Outcome } from '../shared/rpc-metrics.ts'
+export { WslRpcPool } from '../shared/rpc-transport.ts'
+export { readMetadata } from '../shared/rpc-files.ts'
+export { rpcDiagnostics as performanceSnapshot } from '../shared/rpc-metrics.ts'
 export { expandBraces, globToRegExp, matchGlob } from '../shared/search-patterns.ts'
 
 /** The marker `$0` of both scripts; a fixed string, never a path from the model. */
@@ -130,8 +136,12 @@ export interface Config {
   timeoutMs?: number
   /** The `wsl.exe` executable (absolute path or PATH name). */
   wslPath?: string
-  /** oneshot (default), persistent (requires Python 3), or auto (startup-only fallback). */
+  /** auto (default, startup-only fallback), persistent (requires Python 3), or oneshot. */
   transport?: string
+  /** Idle worker lifetime; default 120 seconds, bounded to 1 second–1 hour. */
+  idleMs?: number
+  /** Collect bounded, argument-free timing counters; default true. */
+  metrics?: boolean
   /** Distribution used only when the session cwd carries none (a Linux-absolute cwd). */
   distro?: string
 }
@@ -156,7 +166,7 @@ const DEFAULTS: ResolvedConfig = {
   rawOutputMaxBytes: RAW_OUTPUT_MAX_BYTES,
   timeoutMs: SEARCH_TIMEOUT_MS,
   wslPath: 'wsl.exe',
-  transport: 'oneshot',
+  ...RPC_DEFAULTS,
 }
 
 /** Validated plugin config. */
@@ -171,6 +181,8 @@ export const Config: z<Config> = z.object({
   wslPath: z.string().default(DEFAULTS.wslPath),
   distro: z.string(),
   transport: z.string(),
+  idleMs: z.number(),
+  metrics: z.boolean(),
 })
 
 /** Services these tools register into. */
@@ -739,33 +751,46 @@ function acceptRun(run: WslRun, toolName: string, rawOutputMaxBytes: number): Bu
  *   this plugin with none, and {@link DEFAULTS} then supplies every knob.
  */
 export function apply(ctx: Context, config?: Config): void {
-  const resolved: ResolvedConfig = { ...DEFAULTS, ...config === undefined ? {} : config,
-    transport: config?.transport ?? process.env.DSH_WSL_SEARCH_TRANSPORT ?? DEFAULTS.transport }
-  if (!['oneshot', 'persistent', 'auto'].includes(resolved.transport)) {
-    throw new Error('wsl-search: transport must be oneshot, persistent, or auto')
-  }
+  const resolved: ResolvedConfig = { ...DEFAULTS, ...config, ...resolveRpcConfig(config) }
   const tools = ctx.get('tools') as unknown as ToolsRegistryFace | undefined
   if (tools === undefined) return
-  const executeSearch = createSearchRunner(ctx, resolved)
-  registerGrep(ctx, tools, resolved, executeSearch)
-  registerGlob(ctx, tools, resolved, executeSearch)
+  const runtime = createSearchRunner(ctx, resolved)
+  const measured = timedTools(tools, runtime.metrics)
+  registerGrep(ctx, measured, resolved, runtime.run)
+  registerGlob(ctx, measured, resolved, runtime.run)
   registerGuidance(ctx)
 }
 
 type SearchRunner = (target: WslSearchTarget, op: 'grep' | 'glob', values: readonly string[], signal?: AbortSignal) => Promise<WslRun>
 
 /** The exact existing tool protocol stays above this replaceable execution seam. */
-function createSearchRunner(ctx: Context, config: ResolvedConfig): SearchRunner {
-  const once: SearchRunner = (target, op, values, signal) => runInDistro(
-    buildWslArgv(target, op === 'grep' ? GREP_SCRIPT : GLOB_SCRIPT, values),
-    config.wslPath, config.timeoutMs, config.rawOutputMaxBytes, signal)
-  if (config.transport === 'oneshot') return once
-  // Do not launch resources whose lifetime the host cannot own.
-  if (typeof ctx.effect !== 'function') throw new Error('wsl-search: persistent transport needs a host effect scope')
-  const pool = new SearchWorkerPool()
-  ctx.effect(() => () => pool.dispose())
+function createSearchRunner(ctx: Context, config: ResolvedConfig): { run: SearchRunner; metrics: RpcMetrics } {
+  // Auto cannot retain a process without a disposal hook; legacy/minimal hosts keep oneshot.
+  const owned = typeof ctx.effect === 'function'
+  if (!owned && config.transport === 'persistent') throw new Error('wsl-search: persistent transport needs a host effect scope')
+  const pool = owned && config.transport !== 'oneshot'
+    ? new WslRpcPool({ idleMs: config.idleMs, metrics: config.metrics }) : undefined
+  const metrics = pool?.metrics ?? new RpcMetrics(config.metrics)
+  if (owned) ctx.effect(() => {
+    const unregister = registerRpcDiagnostics(() => ({ mode: config.transport, effectiveMode: pool ? config.transport : 'oneshot',
+      ...pool ? pool.diagnostics() : { workers: 0, launches: 0, pending: 0, metrics: metrics.snapshot() } }))
+    return () => { unregister(); pool?.dispose() }
+  })
+  const once = async (target: WslSearchTarget, op: 'grep' | 'glob', values: readonly string[], signal?: AbortSignal,
+    timeout = config.timeoutMs): Promise<WslRun> => {
+    const start = performance.now()
+    let outcome: Outcome = 'error'
+    try {
+      const result = await runInDistro(buildWslArgv(target, op === 'grep' ? GREP_SCRIPT : GLOB_SCRIPT, values),
+        config.wslPath, timeout, config.rawOutputMaxBytes, signal)
+      outcome = result.aborted ? 'aborted' : result.stdout.length > config.rawOutputMaxBytes ? 'overflow'
+        : result.code === 0 || (op === 'grep' && result.code === 1) ? 'ok' : 'error'
+      return result
+    } finally { metrics.record(`oneshot.${op}`, performance.now() - start, outcome) }
+  }
   let warned = false
-  return async (target, op, values, signal) => {
+  const run: SearchRunner = async (target, op, values, signal) => {
+    if (!pool) return once(target, op, values, signal)
     const where = { ...target, wslPath: config.wslPath }
     const request = { op, args: values, timeoutMs: config.timeoutMs, maxBytes: config.rawOutputMaxBytes,
       ...signal === undefined ? {} : { signal } }
@@ -776,16 +801,33 @@ function createSearchRunner(ctx: Context, config: ResolvedConfig): SearchRunner 
           warned = true
           console.warn(`wsl-search: persistent startup unavailable; using oneshot: ${reason}`)
         }
-        return runInDistro(buildWslArgv(target, op === 'grep' ? GREP_SCRIPT : GLOB_SCRIPT, values),
-          config.wslPath, remaining, config.rawOutputMaxBytes, signal)
+        return once(target, op, values, signal, remaining)
       })
     } catch (error) {
-      if (error instanceof SearchTransportError) {
-        throw new SearchError(error.message, error.code === 'SEARCH_ABORTED' ? 'SEARCH_ABORTED' : 'SEARCH_FAILED')
+      if (error instanceof RpcTransportError) {
+        throw new SearchError(error.message, error.code === 'RPC_ABORTED' ? 'SEARCH_ABORTED' : 'SEARCH_FAILED')
       }
       throw error
     }
   }
+  return { run, metrics }
+}
+
+/** Measure actual tool execution (including parsing/filtering/spill), without changing its returned schema. */
+function timedTools(tools: ToolsRegistryFace, metrics: RpcMetrics): ToolsRegistryFace {
+  return { register(value: unknown) {
+    const tool = value as { name: 'grep' | 'glob'; execute: (...args: unknown[]) => Promise<unknown> }
+    tools.register({ ...tool, async execute(...args: unknown[]) {
+      const start = performance.now()
+      let outcome: Outcome = 'ok'
+      try { return await tool.execute(...args) }
+      catch (error) {
+        const code = (error as { code?: string } | null)?.code ?? ''
+        outcome = code.includes('ABORT') ? 'aborted' : code.includes('OVERFLOW') ? 'overflow' : 'error'
+        throw error
+      } finally { metrics.record(`tool.${tool.name}`, performance.now() - start, outcome) }
+    } })
+  } }
 }
 
 /**

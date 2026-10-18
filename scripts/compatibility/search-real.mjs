@@ -13,7 +13,7 @@ import { promisify } from 'node:util';
 // tell which one happened.
 import { load } from './plane.mjs';
 
-const { apply } = await load('search');
+const { apply, performanceSnapshot } = await load('search');
 
 const execFileAsync = promisify(execFile);
 const distro = process.env.WSL_COMPAT_DISTRO || 'Ubuntu';
@@ -48,7 +48,8 @@ const BASE_CONFIG = {
   rawOutputMaxBytes: 20_000_000,
   timeoutMs: 30_000,
   wslPath: 'wsl.exe',
-  transport: process.env.DSH_WSL_TEST_SEARCH_TRANSPORT || 'oneshot',
+  ...(process.env.DSH_WSL_TEST_SEARCH_TRANSPORT === 'default' ? {}
+    : {transport: process.env.DSH_WSL_TEST_SEARCH_TRANSPORT || 'oneshot'}),
 };
 
 /**
@@ -321,8 +322,19 @@ try {
   const unionGrep = await selective.call(selective.grep, {pattern: 'needle', include: 'perf/src/*.{ts,js}', path: 'perf'});
   assert.deepEqual(unionGrep.matches.map(match => match.path).sort(), ['perf/src/main.js', 'perf/src/main.ts']);
   console.log('search prefilter tool contract: selective glob/grep fit the budget; explicit hidden target and multi-hint union preserved');
+  if (process.env.DSH_WSL_TEST_SEARCH_TRANSPORT === 'default') {
+    const providers = performanceSnapshot().providers;
+    const used = providers.filter(item => item.metrics?.stages['tool.grep']?.count > 1);
+    assert.ok(used.length > 0, 'tool statistics were not registered');
+    assert.ok(used.every(item => item.mode === 'auto' && item.launches === 1 && item.fallbacks === 0),
+      'default mode did not reuse a healthy worker');
+    assert.ok(used.every(item => item.idleMs === 120000), 'idle default was not applied');
+    assert.ok(!JSON.stringify(providers).includes(root), 'performance response leaked a path');
+    console.log('PASS default auto: reused RPC worker, tool timings and 120-second idle policy');
+  }
 } finally {
   for (const dispose of disposers.reverse()) dispose();
+  assert.equal(performanceSnapshot().providers.length, 0, 'diagnostic registry survived provider disposal');
   for (const candidate of [root, outside]) {
     if (path.dirname(candidate) !== linux) throw new Error(`Unexpected fixture root: ${candidate}`);
   }

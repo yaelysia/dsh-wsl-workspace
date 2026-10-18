@@ -64,7 +64,7 @@ try {
   console.log(JSON.stringify({scope:'native scripts + transport; warm filesystem; excludes DSH, model and host filtering',
     platform:process.platform,node:process.version,distro:windows?distro:null,unrelatedFiles:files,
     workerBootMs,bootScope:'new worker; distribution already warm from fixture setup',
-    persistentPool:pool.snapshot(),rows},null,2))
+    persistentPool:pool.snapshot(),diagnostics:pool.diagnostics(),rows},null,2))
 } finally {
   pool.dispose()
   await runBash('rm -rf -- "$1"',[root],distro)

@@ -1,3 +1,4 @@
+import type { ResolvedRpcConfig } from '../shared/rpc-config.ts'
 /**
  * WSL preset-variant generator. For every healthy source preset the roster
  * supplies, a `wsl-<id>` variant is materialized under the roster's user
@@ -219,6 +220,7 @@ function wslWorldGroup(
   jobsPath?: string,
   sawJobs = false,
   imagePath?: string,
+  searchOptions?: ResolvedRpcConfig,
 ): string {
   return [
     '# ── WSL execution world (dsh-wsl-workspace variant) ─────────────────────',
@@ -270,6 +272,12 @@ function wslWorldGroup(
       : [
           '    - id: search-wsl',
           `      name: '${searchPath.replace(/'/g, "''")}'`,
+          ...(searchOptions === undefined ? [] : [
+            '      config:',
+            `        transport: '${searchOptions.transport}'`,
+            `        idleMs: ${searchOptions.idleMs}`,
+            `        metrics: ${searchOptions.metrics}`,
+          ]),
         ]),
     // The world's `bash` is the host's *persistent* tool, whose schema declares
     // only `command`: nothing here can start a tracked background job, so the
@@ -516,6 +524,7 @@ export function transformPresetForWsl(
   searchPath?: string,
   jobsPath?: string,
   imagePath?: string,
+  searchOptions?: ResolvedRpcConfig,
 ): string {
   const lines = source.split('\n')
   const spans = topLevelSpans(lines)
@@ -563,7 +572,7 @@ export function transformPresetForWsl(
   if (source.includes('tool-jobs')) sawJobs = true
   const result = [...kept]
   if (result.length > 0 && result[result.length - 1] !== '') result.push('')
-  result.push(wslWorldGroup(shellPath, fsPath, sawEditor, persistent, sawSearch ? searchPath : undefined, jobsPath, sawJobs, imagePath))
+  result.push(wslWorldGroup(shellPath, fsPath, sawEditor, persistent, sawSearch ? searchPath : undefined, jobsPath, sawJobs, imagePath, searchOptions))
   return result.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '\n')
 }
 

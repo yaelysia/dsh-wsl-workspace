@@ -3,6 +3,10 @@ on:
   pull_request:
     paths:
       - 'src/shared/search-*.ts'
+      - 'src/shared/rpc-*.ts'
+      - 'src/index.ts'
+      - 'src/host/variants.ts'
+      - 'tests/rpc-config-metrics.test.mjs'
       - 'src/host/wsl-search.ts'
       - 'scripts/benchmark-search*.mjs'
       - 'tests/search-prefilter.test.mjs'
@@ -49,7 +53,7 @@ jobs:
       - name: Native prefilter correctness on Windows to WSL2
         run: node --experimental-strip-types --test tests/search-prefilter.test.mjs
       - name: Persistent transport lifecycle and native protocol
-        run: node --experimental-strip-types --test tests/search-transport.test.mjs
+        run: node --experimental-strip-types --test tests/search-transport.test.mjs tests/rpc-config-metrics.test.mjs
       - name: Warmed script A/B (informational, no latency gate)
         run: |
           node --experimental-strip-types scripts/benchmark-search.mjs --files 1000 --iterations 10 > logs/search-benchmark.json
@@ -70,6 +74,12 @@ jobs:
           node -e "if (!require('node:fs').statSync(process.env.WSL_COMPAT_DRIVE_PATH).isDirectory()) process.exit(1)"
           node --experimental-strip-types scripts/compatibility/search-real.mjs 2>&1 | tee logs/persistent-source.log
           DSH_WSL_TEST_PLANE=lib node --experimental-strip-types scripts/compatibility/search-real.mjs 2>&1 | tee logs/persistent-lib.log
+      - name: Registered tools use auto without an opt-in, source and lib
+        env:
+          DSH_WSL_TEST_SEARCH_TRANSPORT: default
+        run: |
+          node --experimental-strip-types scripts/compatibility/search-real.mjs 2>&1 | tee logs/auto-source.log
+          DSH_WSL_TEST_PLANE=lib node --experimental-strip-types scripts/compatibility/search-real.mjs 2>&1 | tee logs/auto-lib.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -87,4 +97,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: node --experimental-strip-types --test tests/search-transport.test.mjs
+      - run: node --experimental-strip-types --test tests/search-transport.test.mjs tests/rpc-config-metrics.test.mjs
