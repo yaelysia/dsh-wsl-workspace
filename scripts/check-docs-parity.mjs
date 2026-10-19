@@ -69,38 +69,38 @@ function sectionBody(text, heading) {
 }
 
 for (const [filename, expected] of Object.entries(PAGES)) {
-  if (!exists(filename)) { fail(${filename}: missing); continue }
+  if (!exists(filename)) { fail(`${filename}: missing`); continue }
   const before = red.length
   const text = read(filename)
   const headings = text.split('\n').filter(line => line.startsWith('## '))
   if (JSON.stringify(headings) !== JSON.stringify(expected)) {
-    fail(${filename}: sections differ from the current fork's documented layout)
+    fail(`${filename}: sections differ from the current fork's documented layout`)
   }
   for (const token of REQUIRE_EVERYWHERE) {
-    if (!text.includes(token)) fail(${filename}: missing ${token})
+    if (!text.includes(token)) fail(`${filename}: missing ${token}`)
   }
   if (/dsh\.so\/badge|raw\.githubusercontent\.com\/dsh-wsl-workspace-maintainers\//.test(text)) {
-    fail(${filename}: obsolete upstream badge or hosted image remains)
+    fail(`${filename}: obsolete upstream badge or hosted image remains`)
   }
   if (/^\s*dsh plugin(?:\s+--profile\s+\S+)?\s+add\s+dsh-wsl-workspace\s*$/m.test(text)) {
-    fail(${filename}: recommends the upstream npm name instead of the fork)
+    fail(`${filename}: recommends the upstream npm name instead of the fork`)
   }
-  if (!text.includes('MIT')) fail(${filename}: missing license name)
+  if (!text.includes('MIT')) fail(`${filename}: missing license name`)
   if (FULL.has(filename)) {
-    for (const token of REQUIRE_FULL) if (!text.includes(token)) fail(${filename}: missing ${token})
+    for (const token of REQUIRE_FULL) if (!text.includes(token)) fail(`${filename}: missing ${token}`)
     const compatibility = sectionBody(text, FULL.get(filename))
     if (compatibility === null) {
-      fail(${filename}: compatibility section absent)
+      fail(`${filename}: compatibility section absent`)
     } else {
       const listed = [...new Set([...compatibility.matchAll(/`([^`]+)`/g)].map(m=>m[1]).filter(x=>/^0\.\d+\.\d+/.test(x)))].sort()
-      if (listed.join('|') !== declared.join('|')) fail(${filename}: compatibility list != package.json declaration)
+      if (listed.join('|') !== declared.join('|')) fail(`${filename}: compatibility list != package.json declaration`)
     }
   } else {
     if (!text.includes('[English](README.md)') || !text.includes('[简体中文](README.zh.md)')) {
-      fail(${filename}: concise translation must point to the full guides)
+      fail(`${filename}: concise translation must point to the full guides`)
     }
   }
-  if (red.length === before) pass(${filename}: correct fork identity, installation and structure)
+  if (red.length === before) pass(`${filename}: correct fork identity, installation and structure`)
 }
 
 function markdownFiles(dir, acc = []) {
@@ -115,7 +115,7 @@ function markdownFiles(dir, acc = []) {
 
 let links = 0
 for (const file of markdownFiles(root)) {
-  const archived = file.includes(${path.sep}archive${path.sep})
+  const archived = file.includes(`${path.sep}archive${path.sep}`)
   for (const hit of fs.readFileSync(file, 'utf8').matchAll(/\]\(([^)\s]+)\)/g)) {
     const target = hit[1]
     if (/^(?:https?:|mailto:|#)/.test(target)) continue
@@ -123,12 +123,12 @@ for (const file of markdownFiles(root)) {
     links++
     const pathname = decodeURIComponent(target.split('#')[0])
     if (!fs.existsSync(path.resolve(path.dirname(file), pathname))) {
-      fail(${path.relative(root, file)}: broken relative link ${target})
+      fail(`${path.relative(root, file)}: broken relative link ${target}`)
     }
   }
 }
 if (links === 0) fail('no relative Markdown links checked')
-else pass(${links} relative Markdown links inspected)
+else pass(`${links} relative Markdown links inspected`)
 
 function changeVersions(filename) {
   return exists(filename) ? [...read(filename).matchAll(/^## (0\.[^\s—]+) —/gm)].map(m=>m[1]) : null
@@ -138,10 +138,10 @@ const zh = changeVersions('CHANGELOG.zh.md')
 if (!en || !zh || en.join('|') !== zh.join('|') || en[0] !== manifest.version) {
   fail('English/Chinese CHANGELOG versions disagree with each other or package.json')
 } else {
-  pass(${en.length} CHANGELOG releases agree with package.json)
+  pass(`${en.length} CHANGELOG releases agree with package.json`)
 }
 
 for (const message of green) console.log('  ok   ' + message)
 for (const message of red) console.log('  RED  ' + message)
-console.log(red.length ? $docs-parity: ${red.length} RED, ${green.length} ok$ : $docs-parity: all ${green.length} checks green$)
+console.log(red.length ? `docs-parity: ${red.length} RED, ${green.length} ok` : `docs-parity: all ${green.length} checks green`)
 process.exit(red.length ? 1 : 0)
