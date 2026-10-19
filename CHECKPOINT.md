@@ -1,5 +1,13 @@
 # Windows DSH → WSL continuation checkpoint
 
+## CP11: user-confirmed shared RPC pool acceptance after PR #7 merge (2026-10-19)
+
+- [PR #7](https://github.com/yaelysia/dsh-wsl-workspace/pull/7) was merged into `main` at `addd1c07ff87c6c84782879abb4019d01cd0818d`, preserving the Loader default-export correction and matching `lib/`.
+- The user has now reported that **all requested post-merge verification passed**. In context this closes the three previously failed shared-pool acceptance points: **R1** (file tools and grep/glob share one owner pool), **R2** (idle reclaim and recovered operations continue sharing), and **R4** (full Desktop restart continues sharing). R0 and R3 had already passed the earlier installation/workspace tests.
+- This is a **user-reported Desktop acceptance outcome**; no new raw performance JSON, per-provider counters, or independently confirmed installed SHA were supplied with this message. Do not invent them or misattribute the successful retest to the older `cc5a25e4` build.
+- The CP10 R1/R2/R4 failures below remain a correct historical record for `cc5a25e4`. This CP11 entry supersedes the *open shared-pool defect status*, not that evidence. The separate DSH host root-Include hot reload / Git installation transaction / rollback issues are **not** proven fixed by the shared-pool acceptance.
+- This checkpoint only updates documentation. It does not alter plugin source, `lib/`, the installed Desktop, or the published Git package. No additional user test or reinstall is needed merely for this record.
+
 ## CP10: actual Loader export repair; preserve the failed shared-pool UAT
 
 Active continuation branch: **`fix/cp8-loader-rpc-pool`**, based on main `cc5a25e415cb9ab3a0b526eeedc59ac38468df91`. The runtime repair and matching build were delivered at **`1c257fadddf6c9a786b691f9700c8460ae7527ff`**. Read [CP10 cause, evidence and retest boundary](docs/cp10-loader-rpc-pool.md) first. Do not restart the four completed implementation stages or the CP7 repair.
