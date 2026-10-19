@@ -1,0 +1,59 @@
+name: rpc-loader-compatibility
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rpc-loader-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  reported-host:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      WSL_COMPAT_DISTRO: Ubuntu-24.04
+      MSYS_NO_PATHCONV: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - name: Isolated reported host and filesystem peer closure
+        run: >-
+          npm install --prefix .host-current --ignore-scripts --legacy-peer-deps --no-audit --no-fund
+          @deepseek-ai/dsh@0.2.1-rc.2 @deepseek-ai/dsh-scope@0.2.1-rc.2
+          @deepseek-ai/dsh-fs@0.2.1-rc.2 @deepseek-ai/dsh-sandbox@0.2.1-rc.2
+          @deepseek-ai/dsh-output-retention@0.2.1-rc.2 @deepseek-ai/dsh-spill@0.2.1-rc.2
+      - uses: Vampire/setup-wsl@v3
+        if: runner.os == 'Windows'
+        with:
+          distribution: Ubuntu-24.04
+          set-as-default: 'true'
+          additional-packages: python3
+      - name: Record actual WSL version
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p logs
+          wsl.exe -l -v 2>/dev/null | tr -d '\0\r' | tee logs/distributions.txt
+      - name: Loader-selected exports, isolated owners, search reuse and owner replacement
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          node scripts/run-rpc-loader-host.mjs .host-current 0.2.1-rc.2 2>&1 | tee logs/loader-host.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rpc-loader-${{ matrix.os }}
+          path: logs/
+          retention-days: 14

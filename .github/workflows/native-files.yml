@@ -30,6 +30,7 @@ jobs:
             npm run test:native-files 2>&1 | tee logs/native-$plane.log
             npm run test:rpc-owner 2>&1 | tee logs/owner-$plane.log
             npm run test:rpc-mixed 2>&1 | tee logs/mixed-$plane.log
+            npm run test:rpc-loader 2>&1 | tee logs/loader-$plane.log
             npm run test:rpc-busy 2>&1 | tee logs/busy-$plane.log
           done
           npm run test:search-transport
@@ -88,6 +89,7 @@ jobs:
             npm run test:native-files 2>&1 | tee logs/native-$plane.log
             npm run test:rpc-owner 2>&1 | tee logs/owner-$plane.log
             npm run test:rpc-mixed 2>&1 | tee logs/mixed-$plane.log
+            npm run test:rpc-loader 2>&1 | tee logs/loader-$plane.log
             npm run test:rpc-busy 2>&1 | tee logs/busy-$plane.log
           done
       - name: Full provider A/B against UNC (informational, not a latency gate)

@@ -1,81 +1,62 @@
 # Windows DSH → WSL continuation checkpoint
 
-## CP9: main update failed; installed state must be reconciled
+## CP10: actual Loader export repair; preserve the failed shared-pool UAT
 
-Current continuation basis is **main**, not the old phase or repair branches. PR #6 was merged at `deaec609ef8c8eb8ced1a541e3d684f310c6da1f`; its tree matches the verified CP7 head. [CP8 merge/UAT handoff](https://github.com/yaelysia/dsh-wsl-workspace/pull/6#issuecomment-6257194042).
+Active continuation branch: **`fix/cp8-loader-rpc-pool`**, based on main `cc5a25e415cb9ab3a0b526eeedc59ac38468df91`. The runtime repair and matching build were delivered at **`1c257fadddf6c9a786b691f9700c8460ae7527ff`**. Read [CP10 cause, evidence and retest boundary](docs/cp10-loader-rpc-pool.md) first. Do not restart the four completed implementation stages or the CP7 repair.
 
-The user now reports a failed update: Windows path-case aliases duplicating app-boot state, Git URL/shorthand source mismatch, and rollback leaving changed node_modules. **Do not record this as a successful new installation or proceed with R1-R4 on an unverified mixed state.** The previous accepted Desktop SHA `767c6818` is historical; neither it nor the requested new SHA establishes which package files currently run after failure.
+### Latest actual user installation
 
-Read [CP9 source findings, recovery boundary and required regression tests](docs/install-update-failure-cp9.md) first. Source review at upstream `687f282e` confirms raw source-string matching, dependency-diff target identification, two-file-only rollback, a separate activation boundary and incomplete `changed` accounting. The actual Windows case aliases and current installed module graph still require the latest failure evidence; the old `0676ed1f` report does not provide them.
+On 2026-10-19, the user cleanly installed main `cc5a25e4` on Desktop/host **0.2.1-rc.2**. Both lockfiles and all 18 installed JavaScript artifacts were checked against that revision. No relevant configuration/environment overrides were found. This supersedes CP9's uncertainty about the files left by the previous failed update.
 
-This checkpoint changes documentation only: no plugin runtime/lib change, no host deployment, no user-profile modification and no new runtime test claim. The CP7 host-root candidate remains test-only. Do not keep recommending uninstall/reinstall through the same broken host transaction, silently edit installed host files, or implement unrelated WSL capabilities to compensate. Host update/rollback and module-identity repairs belong at the host source/integration boundary.
+Keep the reported full acceptance result unchanged: **R0=P, R1=F, R2=F, R3=P, R4=F**. Core read/write/edit/search, A/B isolation, old sessions, idle reclamation/recovery and restart persistence work. R1/R2/R4 fail because file and search remain in two separate pools, before idle, after recovery and after a complete restart. Active pools finish with pending=0 and fallbacks=0. This was not a provider-count misunderstanding or an old installation.
 
-## CP7 historical checkpoint: resumed known-issue repairs
+No hot-reload error occurred during that installation. This is not proof that the separate host source-identity, rollback or root-Include defects are repaired. Do not request the already supplied report again, mark this revision's shared-pool UAT as passed, or tell the user to retest unchanged `cc5a25e4`.
 
-The following is the retained CP7 record before the CP8 merge. Its branch/merge/install status is superseded by CP8 and CP9 above; its implementation and exact validation scope remain historical evidence.
+### Delivered correction
 
-Active work: `fix/uat-known-issues`, [PR #6](https://github.com/yaelysia/dsh-wsl-workspace/pull/6), based on main `a4e650470c9f78a17fd848f960afa2ee4c70be93`. Do not restart the four completed implementation stages. The user's accepted installed build remains `767c68188c9a767bbcabeaf735a6aa598d7f39e8`; this branch has not been deployed to their Desktop or merged into main.
+`src/host/wsl-search.ts` previously exported named `inject` and `Config` but a bare `apply` as default. Actual Cordis Loader selects the default export and therefore discarded both metadata fields. The CP7 tests passed a whole module namespace to `ctx.plugin()` and did not exercise this boundary.
 
-The latest tested runtime/build checkpoint is **`f3888f84616e8b42fee20ea0c76d844ad7e54514`**. It includes the previously interrupted RPC-owner correction and the resumed help corrections. [Delivery run 39144920040](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39144920040) verified and pushed that commit. This document/cleanup commit does not alter `src/` or `lib/`. Its own additional cross-platform checks must be read from PR #6, not inferred from an earlier green run.
+The production change is only:
 
-### Completed in this branch
+```ts
+// Loader selects the default export; keep dependency and schema metadata on it.
+export default { apply, inject, Config }
+```
 
-- `src/host/wsl-search.ts` declares `inject = ['tools', 'fs']`. Real Cordis lifecycle waits for the filesystem before selecting its RPC pool, and tracks its replacement/disposal. No global pool or cross-permission sharing was added.
-- `tests/rpc-owner-lifecycle.test.mjs` checks both initialization orders, one shared launch after file/search use, search disposal without killing its owner, separate owners and explicit metrics policies.
-- `tests/rpc-mixed-lifecycle.test.mjs` holds a real directory lock while a guarded mutation overlaps grep and six reads, cancels the mutation, independently verifies unchanged disk content and performs a later guarded edit. Use `diagnostics().pending`, not the deliberately smaller `snapshot()`. Exact edits use `oldString/newString` and an expected `{ version }`.
-- `tests/rpc-busy-idle.test.mjs` holds a mutation for a real 125 seconds at the 120-second idle default, with no keepalive request. Source/lib runs are wired into Linux and WSL1/WSL2 CI. A submitted test is not a passed test; final results live in the exact PR run.
-- Bilingual help now describes the shipped background option, cache invalidation, native-file policy, search prefilter and inherited compatibility scope. The two previously allowed documentation defects are required regressions. All 13 documentation claims passed in delivery; synthetic observations still verify the real gate's failure accounting.
-- Matching `lib/` is rebuilt and committed. Temporary delivery/environment workflows and the temporary transform are retired after their work; ordinary regression workflows remain.
+No filesystem/RPC algorithm, native mutation policy, identity key, global pool, dependency version or installed host file is changed. Named exports remain available. `lib/wsl-search.js` and its source map were rebuilt and committed with the source.
 
-### Host reload: reproduction and candidate, NOT a deployed fix
+### Regression and delivery evidence
 
-`profile reload requires the root Include entry` remains unresolved on the user's installed host. In isolated DSH `0.2.1-rc.2`, a second evaluation of app-boot loses the first evaluation's module-local WeakMap registration and reproduces the exact error. A host-owned candidate stores the exact boot registration on the root context with a stable symbol, preserving root separation and disposal checks. The same-module and service-root controls, duplicate-module failure, candidate two-root success and absent/disposed-root rejection passed on Linux and Windows in [39143663304](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39143663304).
+- `tests/rpc-loader-entry.test.mjs` uses real Loader file-entry loading inside the generated isolated WSL group. It covers both startup orders, one actual file/search worker, owner disable/re-enable and rebinding, search disposal without killing its owner, and rejection of a parent-realm filesystem. A retained old-export control demonstrates premature tool registration.
+- Before repair, the exact main source fails three positive checks; after repair all four cases pass on source and lib. The tests use the existing native backend and Linux operations, not mocked file results or a fake Loader.
+- [Delivery 39191505119](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39191505119) completed successfully and pushed `1c257fad`. Pinned DSH 0.2.0-rc.2 / Cordis 4.0.4 / Loader 1.0.5 and isolated reported DSH 0.2.1-rc.2 / Cordis 4.0.5 / Loader 1.0.6 passed the same source/lib Loader regression.
+- Existing portable, host, native-file, RPC, persona, documentation, repeated-build and clean-install checks passed in delivery. The inherited **209-error type baseline** and Linux's Windows-specific file-test skip are not cleared.
+- `.github/workflows/native-files.yml` adds the real Loader test to Linux/WSL1/WSL2 source/lib loops. `.github/workflows/rpc-loader-compat.yml` independently runs the reported host on Linux and Windows with WSL. Read the final PR HEAD checks for those cross-platform results; submitted jobs are not automatically passes.
 
-This establishes a sufficient failure mechanism, not that the user's Desktop has that precise module duplication. The plugin does not rewrite installed host JavaScript, create a second root Include, suppress the error or relax activation validation. The candidate is contained in the isolated reproduction script, outside shipped `lib/`. A real host repair requires host-owned integration and verification against the failing runtime. Preserve the accepted full-restart route meanwhile.
+The first delivery's validation passed but its push was rejected because GITHUB_TOKEN cannot modify workflows. Workflow registration was committed through the GitHub connector; the next delivery passed and published source/lib without workflow changes. Temporary delivery files are now removed. Do not mislabel the first overall run as successful or mistake its unpushed commit for the delivered one.
 
-### Resume commands and source locations
+### Resume and limited retest
 
-Read current branch HEAD, this file, [known issue status](docs/known-issues-repair.md), and PR #6 checks first. Node 24 development checkout:
+Use Node 24 in a development checkout:
 
 ```text
 npm ci
 node ci/install-pinned.mjs
-npm run test:unit
+npm run test:rpc-loader
+DSH_WSL_TEST_PLANE=lib npm run test:rpc-loader
 npm run test:node
-npm run test:rpc-owner
-npm run test:rpc-mixed
-npm run test:rpc-busy
 npm run test:native-files
 npm run test:search-transport
-npm run test:docs-claims
 npm run typecheck:gate
 npm run verify:install
 ```
 
-Run file/owner/mixed/busy suites again with `DSH_WSL_TEST_PLANE=lib`. In PowerShell set `$env:DSH_WSL_TEST_PLANE='lib'`; use the actual `WSL_COMPAT_DISTRO`. Linux execution is not a substitute for Windows/WSL. `test:rpc-busy` deliberately takes more than 125 seconds per plane. The host reproduction's isolated peer setup is in `.github/workflows/host-reload-reproduction.yml`; run `node --expose-internals scripts/reproduce-profile-reload.mjs` only against that isolated test tree, not a user profile.
+The reported-host peer closure is in `.github/workflows/rpc-loader-compat.yml`; `node scripts/run-rpc-loader-host.mjs .host-current 0.2.1-rc.2` tests it without touching a user profile. PowerShell uses `$env:DSH_WSL_TEST_PLANE='lib'` instead of Bash assignment. Windows checks use the actual `WSL_COMPAT_DISTRO`.
 
-Core file code remains in `src/fs.ts`, `src/shared/native-files.ts`, `native-file-worker.ts`, `rpc-transport.ts`, `rpc-worker.ts`. Do not hand-edit only `lib/`; rebuild after source changes and retain source/lib checks.
+Once the repaired code reaches an installable approved revision, only shared-pool closure needs renewed Desktop evidence: R1 ordinary file/search operations in one new WSL Standard session, R2 idle/recovery, R4 full restart. Within one unchanged owner/identity/configuration, one provider must contain both file and search stages; first active use launches once, idle recovery adds one launch, later search reuses it. Preserve R0/R3's existing result. Do not count different permission owners as leaks or use a Bash sleep as a file-RPC lifetime test.
 
-### Remaining boundaries
+## Historical checkpoints and boundaries
 
-The historical 209-error type baseline is not cleared. Busy/mixed CI scenarios do not retroactively mark the earlier Desktop UAT as having run them. The user's actual one-pool outcome after this correction remains to be checked. The existing Windows-mount contracts are not a new Desktop UAT. Formal release and unlisted host versions are not claimed.
+[Full CP0–CP9 record at the accepted main revision](https://github.com/yaelysia/dsh-wsl-workspace/blob/cc5a25e415cb9ab3a0b526eeedc59ac38468df91/CHECKPOINT.md) preserves prior SHAs, merge history and verification limits. [CP8 merge](https://github.com/yaelysia/dsh-wsl-workspace/pull/6#issuecomment-6257194042) remains the main PR #6 merge record; [CP9 host findings](docs/install-update-failure-cp9.md) remain separate unresolved host concerns. [Native evidence](docs/native-files-validation.md), [initial UAT](docs/uat-2026-10-18.md), [earlier main UAT](docs/uat-main-2026-10-18.md) and [CP7 repair](docs/known-issues-repair.md) are historical, not replacements for the latest report.
 
-Do not automatically replay a dispatched mutation, rewrite it through UNC after a native result is unknown, weaken Linux physical-path authorization or version guards, or introduce cross-owner state. Native files remain bounded to 16 MiB full reads/write/edit inputs. No Skill native adaptation, inotify/watch, PTC sandbox migration, body cache or unrelated UI project belongs to this work.
-
-## Earlier checkpoints and accepted baseline
-
-[CP0–CP6 full checkpoint at the main baseline](https://github.com/yaelysia/dsh-wsl-workspace/blob/a4e650470c9f78a17fd848f960afa2ee4c70be93/CHECKPOINT.md) preserves all prior SHAs, merge history and validation scope. Durable evidence: [native file validation](docs/native-files-validation.md), [first UAT and persona fix](docs/uat-2026-10-18.md), [unpatched main UAT](docs/uat-main-2026-10-18.md).
-
-| Checkpoint | Exact baseline | Meaning |
-|---|---|---|
-| Native implementation | `a342fdb4e848ebf8d63e88c917739a66e530d09a` | Guarded native files and RPC |
-| Warm executors | `b473fa02911983c7f410e9a82e36f26ec5038ecf` | Reused Linux file interpreters |
-| CP1 routing | `2d3948d00be3642ddee83cbefed56cebde8e6178` | Windows-drive directory entries use consistent targets/versions |
-| CP4 persona | `677a2178b16a443746460e3b62e0415278d3b566` | Removed plugin-added undeclared cwd interpolation |
-| CP5 main merge | `10e22b906fa5ff3436c47b22520741a5526c9822` | PR #1/#3/#4/#5 merged with history preserved |
-| CP6 actual installation | `767c68188c9a767bbcabeaf735a6aa598d7f39e8` | Main installed without a local patch; minimum tools/restart passed |
-| CP7 resumed repairs | `f3888f84616e8b42fee20ea0c76d844ad7e54514` | Owner dependency, lifecycle regressions, help and matching build |
-| CP8 main merge | `deaec609ef8c8eb8ced1a541e3d684f310c6da1f` | PR #6 merged; subsequent Desktop update reported failed |
-| CP9 failed-update review | `00b78dab4aab84e95a2390895f9fbdb332387abf` | Host identity/rollback findings and recovery/test boundary; documentation only |
-
-Raw user profiles, workstation paths and conversation logs remain private and are not committed. Use `git log -1 -- CHECKPOINT.md` to identify this continuation record.
+Keep checkpoints and matching source/lib. Never replay dispatched mutations, switch to UNC after an unknown native write outcome, weaken path authorization/version checks or introduce cross-owner state. No Skill adaptation, inotify/watch, PTC migration, body cache or unrelated UI belongs to this fix. Raw user evidence remains private. No package is sent to the user, no npm release is made, and this checkpoint itself does not establish a new Desktop pass or a main merge.
