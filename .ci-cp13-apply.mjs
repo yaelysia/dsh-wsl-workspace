@@ -130,6 +130,6 @@ const manifest = JSON.parse(read('package.json'))
 assert.equal(manifest.scripts['bench:native-rpc'], undefined)
 manifest.scripts['bench:native-rpc'] = 'node --experimental-strip-types scripts/benchmark-native-rpc.mjs'
 writeFileSync('package.json', JSON.stringify(manifest, null, 2) + '\n')
-const cp = read('CHECKPOINT.md')
-writeFileSync('CHECKPOINT.md', cp.replace('\n\n', `\n\n## CP13: native I/O performance pass in progress\n\nBased on CP12 \\`30b9abf7496d818c1f43a69ee50745e924e8a37a\\`, branch \\`perf/cp13-native-io\\`. See [CP13 scope and measurement](docs/performance-cp13.md). Candidate changes remove full-buffer copies/re-encoding and repeated bootstrap compression; no protocol, permission, version, mutation replay or owner change. Only measured results from completed jobs may be claimed. CP12's main merge and its pending environment job remain separate. Keep source/lib in sync and retain CP11 Desktop acceptance as historical, not a new UAT.\n\n`.replaceAll('\\`', '`')))
+const cp13 = '\n\n## CP13: native I/O performance pass in progress\n\nBase: CP12 `30b9abf7496d818c1f43a69ee50745e924e8a37a`; branch `perf/cp13-native-io`. Read [CP13 scope and measurement](docs/performance-cp13.md). Changes remove full-buffer copies/re-encoding and repeated bootstrap compression; no protocol, permission, version, replay or owner change. Only completed measurements may be claimed. Keep source/lib synchronized; prior Desktop acceptance is historical, not a new UAT.\n\n'
+writeFileSync('CHECKPOINT.md', read('CHECKPOINT.md').replace('\n\n', cp13))
 console.log('Applied CP13: canonical decoding, zero-copy framing/buffers, bounded newline sampling and immutable bootstrap cache.')
