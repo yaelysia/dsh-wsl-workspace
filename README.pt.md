@@ -1,71 +1,47 @@
-# dsh-wsl-workspace
+# DSH WSL Workspace — Guia rápido em português
 
-> Esta tradução é um retrato da versão upstream. Para instalar e configurar o fork atual com arquivos nativos, consulte o README atualizado em inglês ou chinês.
-> [Current fork](https://github.com/yaelysia/dsh-wsl-workspace) · [English](README.md) · [中文](README.zh.md)
+[English](README.md) · [简体中文](README.zh.md)
 
-[![dsh.so security](https://www.dsh.so/badge/dsh-wsl-workspace.svg)](https://www.dsh.so/artifact/dsh-wsl-workspace)
-[![dsh.so install](https://www.dsh.so/badge/install/dsh-wsl-workspace.svg)](https://www.dsh.so/artifact/dsh-wsl-workspace)
+**Use o DSH no Windows para trabalhar diretamente em projetos no WSL local.**
+A interface, os modelos e as sessões permanecem no Windows; comandos, acesso
+a arquivos e buscas com `grep` / `glob` são executados na distribuição Linux escolhida.
+Não é preciso instalar outra cópia do DSH no WSL.
 
-[English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Español](README.es.md) · [Português](README.pt.md) · [Русский](README.ru.md)
+## Requisitos
 
-![alt text](https://raw.githubusercontent.com/dsh-wsl-workspace-maintainers/dsh-wsl-workspace/HEAD/image-3.png)
-Adicione um espaço de trabalho WSL a partir da interface web do DeepSeek Harness e execute toda a sessão do agente — comandos bash e leitura/escrita de arquivos — dentro de uma distribuição WSL local com caminhos em formato Linux. Não é necessário instalar nada dentro do WSL. A sessão pode acessar WSL e Windows ao mesmo tempo: os comandos bash são executados dentro da distribuição WSL, enquanto os arquivos do Windows continuam acessíveis via `/mnt/<unidade>` (por exemplo `/mnt/c/Users/...`).
-
-A lista de versões do DSH suportadas está na secção Compatibility do [README.md](README.md).
+DSH para Windows, uma distribuição WSL funcional e `python3`
+(Python 3.8 ou superior) dentro dessa distribuição.
 
 ## Instalação
 
-Escolha um dos três métodos abaixo e reinicie o `dsh web`:
+No gerenciador de plugins do DSH, adicione **a URL Git deste fork**:
 
-```powershell
-# 1) Pacote npm
-dsh plugin --profile web add dsh-wsl-workspace
-
-# 2) Repositório GitHub (inclui lib/ pré-compilado, sem build local)
-dsh plugin --profile web add https://github.com/dsh-wsl-workspace-maintainers/dsh-wsl-workspace
-
-# 3) Diretório local (desenvolvimento / uso próprio)
-dsh plugin --profile web add D:\path\to\dsh-wsl-workspace
+```text
+git+https://github.com/yaelysia/dsh-wsl-workspace.git#main
 ```
 
-Após reiniciar o `dsh web`, um botão W aparece ao lado de Settings na parte inferior da barra lateral.
+Ative o plugin e **encerre completamente e reinicie o processo principal do DSH**.
+O pacote npm homônimo do projeto original não contém estas melhorias.
+Confira o commit Git realmente instalado ao atualizar.
 
-## Uso
+## Como usar
 
-Clique no botão W ao lado de Settings na parte inferior da barra lateral para abrir o diálogo "Add WSL workspace". Escolha uma distribuição, navegue pela árvore de diretórios ou digite um caminho Linux absoluto (por exemplo `/home/me/proj`) — o botão Check verifica se o caminho existe antes de criar o espaço de trabalho. O diálogo segue o idioma da interface do DeepSeek Harness. O campo nome de usuário é opcional: deixe vazio para executar os comandos com o usuário padrão da distribuição, ou informe um usuário Linux dessa distribuição para executar a sessão como esse usuário (equivalente a `wsl.exe -u <usuário>`). O nome de usuário só altera a identidade de execução da ferramenta bash — as ferramentas de arquivo passam pelo compartilhamento WSL do lado do Windows e não são afetadas. O nome de usuário de cada espaço de trabalho fica em `<dshHome>/wsl-workspaces.json`; exclua a entrada (ou recrie o espaço de trabalho pelo diálogo) para voltar ao usuário padrão.
+Clique em **W** ao lado das configurações, escolha a distribuição, opcionalmente
+o usuário Linux e uma pasta como `/home/me/project`. Use normalmente
+`read` / `write` / `edit`, `grep` / `glob` e `bash` dentro do WSL.
+Arquivos do Windows continuam acessíveis em `/mnt/c/...`.
+Com configurações compatíveis, arquivos e buscas compartilham um worker RPC;
+ele pode ser liberado após inatividade e reiniciado quando necessário.
 
-Clique em "Create & open" para iniciar uma nova sessão no espaço de trabalho. Na nova sessão, a ferramenta bash executa comandos dentro da distribuição escolhida e `read`/`write`/`edit` operam nos arquivos WSL, portanto cada caminho visto pelo modelo é um caminho Linux. O seletor de modos continua funcionando normalmente: Standard, PTC, Minimal e Creative caem automaticamente na sua variante WSL (as entradas de variante WSL no seletor são bilíngues, ex. `WSL · Standard mode（标准模式）`), e os arquivos do Windows continuam acessíveis a partir da sessão sob `/mnt/<unidade>` (por exemplo `/mnt/c/Users/...`).O botão “?” do diálogo abre um painel com os releases do DSH que esta construção declara, como o plugin é usado e as limitações que ele não consegue contornar.
+Para opções, diagnósticos e limites de arquivos e permissões, consulte o
+[README em inglês](README.md) ou o [README em chinês](README.zh.md).
+Uma atualização pode exigir reiniciar totalmente o DSH se o hot reload falhar.
 
-![alt text](https://raw.githubusercontent.com/dsh-wsl-workspace-maintainers/dsh-wsl-workspace/HEAD/image-2.png)
-## Notas de comportamento
+## Origem e licença
 
-- **Ferramenta bash**: é executada dentro da distribuição WSL com o nome de usuário configurado (vazio = usuário padrão da distribuição, geralmente `root`), podendo ler e escrever em qualquer lugar da distribuição. O sandbox de ACL do Windows não consegue envolver o `wsl.exe` — seus processos filhos rodam no lado do kernel Linux — então o WSL em si é a fronteira de isolamento e a política de arquivos do DSH não se aplica ao bash.
-- **Ferramentas de arquivo (`read`/`write`/`edit`)**: passam pelo compartilhamento WSL 9P do lado do Windows, e o campo de nome de usuário não as afeta. Duas costuras que o host fornecia são reestabelecidas dentro do mundo WSL. **Links simbólicos**: o compartilhamento lista um link Linux mas não o resolve, então `resolve`/`lstat` perguntam à distribuição o caminho real (`wsl.exe … readlink -f`) e continuam a partir dele — um link nunca é substituído por um arquivo comum. **Modo de acesso**: `write`/`edit` são cercados por `ctx.sandboxPolicy` exatamente como o backend do host os cerca — a mesma allow-list `writableRoots` (mais o `/tmp` da distribuição), o mesmo `FS_SANDBOX_DENIED` que a camada de ferramenta renderiza como negação, e o mesmo fato `sandboxMode` que ela lê para a escalada. Como o cercamento roda depois da resolução, ele julga o caminho real: um link para fora do workspace é uma escrita externa e é negado sob `workspace-write`. Uma implantação que não monta serviço de política não cerca nada, como no host.
-- **Busca de arquivos (`grep`/`glob`)**: a suíte de busca do host gera um ripgrep *Windows* empacotado, que não consegue abrir um caminho Linux, então o mundo WSL monta seu próprio par (`src/host/wsl-search.ts` → `lib/wsl-search.js`) e roda a busca **dentro da distribuição**. Nomes de ferramenta, schemas de parâmetro, limites, schema de saída (agrupamento `Line N:`, cabeçalho de contagem, aviso de limite), cartões de busca e o despejo dos resultados cortados vêm das peças que o próprio `@deepseek-ai/dsh-tool-fs-search` exporta, de modo que o que o modelo vê bate com o host. `grep` usa o GNU grep da distribuição (`-rnIEH -Z`; ERE POSIX — `\d`, `\w`, `\b` e `(?i)` funcionam, lookahead e retroreferências não), pula arquivos e diretórios ocultos mais `node_modules` como o ripgrep faz por padrão, **não** lê o `.gitignore`, e falha alto numa distribuição sem GNU grep em vez de enquadrar registros ilegíveis. `glob` lista com GNU `find` (`-printf` dá o mtime de cada arquivo sem um stat por arquivo) e casa padrões estilo gitignore aqui no processo do plugin (`*` nunca cruza separador, `**` cruza, `?`, `[...]`, `{a,b}` e um `!` inicial nega), ordenando do mais antigo ao mais recente exatamente como `rg --sort=modified`. Ambos buscam direto na árvore Linux — links simbólicos, permissões e travessia sem `.gitignore` incluídos — nunca no compartilhamento 9P, e nenhum segue um link simbólico achado durante a recursão, o que também é o padrão do ripgrep. Modos cujo preset de origem não monta a suíte de busca (Minimal) não ganham nenhuma das duas ferramentas.
-- **Catálogo de skills**: a descoberta começa no ancestral `.git` mais próximo do cwd da sessão (ou no próprio cwd, se não houver) e varre para baixo `.dsh/skills` / `.agents/skills` — incluindo projetos aninhados — limitada a 4 níveis de diretório, 64 diretórios de skill e 4096 diretórios visitados; registre o workspace na raiz do projeto em que você realmente trabalha. Se o próprio workspace registrado estiver dentro de um repositório git maior, a varredura começa na raiz desse repositório (a mesma regra do host) e projetos irmãos podem aparecer. Um link simbólico Linux que o compartilhamento do lado Windows não resolve é resolvido pela distribuição (`wsl.exe … readlink -f`, no máximo 32 por consulta, quatro em voo) e a caminhada continua no caminho real, então um projeto linkado com `ln -s` — e os projetos aninhados abaixo dele — é descoberto e deduplicado por esse caminho real. Como vigiar um caminho `\wsl.localhost\...` falha, o preset gerado fixa `watch: false` na linha `skill-filesystem` e o plugin faz varredura periódica em vez disso, em duas passadas: a barata roda a cada 3 segundos sobre os diretórios de skills publicados e re-estatifica cada arquivo de skill, então uma skill adicionada, removida ou **editada** chega na próxima rodada do modelo (o carimbo de tempo existe justamente por causa das edições — o catálogo do modelo só é reconstruído quando a revisão do registro avança, e uma listagem de diretório não distingue um `SKILL.md` reescrito de um arquivo intacto); a caminhada completa de redescoberta roda a cada 30 segundos, porque só uma caminhada encontra um diretório de skills que antes não existia. Os corpos das skills são sempre lidos ao vivo.
-- **Vida útil do shell**: `bash` é um shell **com estado** — `cd`, variáveis exportadas, um virtualenv ativado e jobs em segundo plano sobrevivem entre chamadas. O mundo monta o registro PTY do host e o backend dele dirigido por configuração (`@deepseek-ai/dsh-terminal-bash`) apontado para o relay deste plugin (`src/host/wsl-relay.ts` → `lib/wsl-relay.js`, executado pelo node do próprio host), que entrega o PTY ao `wsl.exe … bash`: a distribuição vem do cwd UNC da sessão (senão `DSH_WSL_DISTRO`), o nome de usuário opcional de `DSH_WSL_USER`, e o relay roda `bash -lc 'cd … && exec bash -i'` para carregar o ambiente de login enquanto o diretório da sessão sobrevive (um `bash -l` puro pode ser mandado de volta a `$HOME` por um profile). A ferramenta registra o nome `bash`, então substitui a linha `dsh-tool-bash` de uso único que um preset não-WSL usaria; o mundo também fornece sua própria capacidade `sandbox` no-op (`src/host/wsl-sandbox.ts`), porque o runner ACL do Windows do host não consegue ler o descritor de segurança de um caminho `\wsl.localhost\…` e o backend PTY confina por meio dela antes de gerar o processo. Os dois shells rodam dentro da distribuição e estão fora da política de arquivos do DSH — o WSL é a fronteira de isolamento deles. **Duas consequências do invólucro do host estão declaradas na descrição da ferramenta**: o shell é um processo para o Agente inteiro, então um `cd` numa chamada decide onde a próxima começa — use caminhos absolutos ou um `cd` explícito; e o host envolve cada comando como `eval -- $'…'`, então um comando terminado em `&` manda para segundo plano **o comando inteiro envolvido** — a chamada volta imediatamente com exit code 0 e sem saída, enquanto a saída real chega mais tarde, possivelmente dentro da saída da próxima chamada. Escreva o trabalho em segundo plano como `( tarefa-longa > log 2>&1 ) &` numa linha só, ou use a ferramenta de jobs em segundo plano.
-- **Digitar num terminal (`wsl_terminal`)**: não se digita num pipe, então um programa que faz uma pergunta — `sudo` pedindo senha, `ssh` a impressão digital da primeira conexão, um REPL, um editor, uma TUI — não tinha resposta que o agente pudesse dar: a espera era diagnosticada, parada e reexecutada num pseudo-terminal descartável só para o modelo ler a reclamação do programa, e o usuário tinha de assumir. Agora o mundo monta uma porta pela qual o agente digita: `open` abre um terminal interativo, `send` digita texto (Enter por padrão, `submit: false` só digita), `read` pagina a tela retida, `signal` entrega `SIGINT`/`SIGTERM`/`SIGKILL`/`SIGTSTP`/`SIGHUP` (`SIGINT` é Ctrl-C), `close` encerra e `list` informa o que está aberto. É o registro PTY do host e o backend `dsh-terminal-bash` apontados para o relay deste plugin — a mesma maquinaria por trás da aba de terminal da barra lateral, com o agente no teclado em vez de uma pessoa — e o shell que ela inicia roda como **o usuário configurado do workspace**, lido de volta do armazenamento do workspace porque o host monta ele mesmo o ambiente de um filho PTY e descarta toda variável `DSH_*`. O `bash` de pipe acima continua o padrão para todo o resto: o pipe carrega cada byte, enquanto uma tela de terminal é uma renderização de 160 colunas com scrollback limitado. Três custos são ditos em vez de escondidos: a janela de silêncio do backend cai de 3000 ms padrão para 1200 ms (nota de origem em `src/host/variants.ts`), então um envio cujo prompt o host não reconhece volta em ~1,2–1,8 s em vez de ~3,0–3,6 s; um `send` diz qual dos dois casos aconteceu em vez de apresentar uma tela silenciosa como prompt; e tudo o que for digitado faz parte do registro da conversa, então uma senha tem de vir do usuário. Medido numa distribuição real, nos dois planos de build, como `root` e como `ruler` (66/66 células em `bash-session-real`): `open` 477–490 ms, um comando digitado que responde, **uma tecla chegando a um programa bloqueado em `/dev/tty`** (`GOT=…`), `submit: false` digitando sem executar e o Enter seguinte executando, `SIGINT` encerrando um `sleep 30` com o shell sobrevivendo, e `close` sem deixar nenhum `bash -i`.
-- **Jobs em segundo plano rastreados**: `bash_background` inicia um comando em segundo plano e devolve na hora um id de job do registro; depois `job_list`, `job_output` (leituras incrementais, transições de estado, avisos de conclusão) e `job_kill` do host agem sobre ele exatamente como agem sobre a ferramenta de uso único. A linha existe porque o schema do shell persistente declara só `command`: sem um produtor, `job_list` respondia sempre “no background jobs”, e um argumento `run_in_background: true` passado ao `bash` era ignorado em silêncio — o schema de parâmetros não proíbe propriedades extras, então nada reportava o erro. Uma sessão real encontrou exatamente isso. A ferramenta só é montada junto com o shell persistente; um mundo que mantém a linha de bash de uso único já tem `run_in_background` naquela ferramenta.
-- **Hosts antigos caem para um shell de uso único**: a pilha persistente é código do *host*, e no Windows ela precisa de um inspetor de processos de plataforma que só existe a partir de `0.1.0-rc.8` — no `0.1.0-rc.7` o `spawnTerminal` lança `subprocess-local: terminal inspection is unsupported on platform win32` antes de iniciar qualquer processo, então cada chamada `bash` daquele release falha por completo (grep/glob, que nunca tocam o PTY, continuam funcionando). O plugin portanto *sonda* o substrato na inicialização em vez de assumir: ele entrega ao `spawnTerminal` um programa que não pode existir, o que chega só à checagem do inspetor e a mais nada — nenhum processo é criado em nenhum dos dois casos, e a rejeição diz qual metade falhou. Quando a resposta é “sem inspetor”, o mundo gerado mantém a linha `dsh-tool-bash` de uso único (o provedor `ctx.shell` do próprio plugin, sem PTY) e o modelo ganha um shell sem estado que funciona, em vez de um erro a cada chamada. `0.1.0-rc.7` é o único release declarado nesse estado; todos os posteriores recebem o shell persistente.
-- O banner de encaminhamento de porta `localhost` (texto ilegível) que o `wsl.exe` imprime em stderr quando a distribuição ainda não estava em execução é inofensivo.
+**Projeto original (origem do fork):** https://github.com/dsh-wsl-workspace-maintainers/dsh-wsl-workspace
 
-## Histórico de versões
+**Este fork:** https://github.com/yaelysia/dsh-wsl-workspace
 
-O histórico completo de versões (da mais recente à mais antiga) está em [CHANGELOG.md](CHANGELOG.md) (chinês: [CHANGELOG.zh.md](CHANGELOG.zh.md)); este README mantém apenas o comportamento atual descrito acima.
-
-## Documentação
-
-Onde cada documento mora, em qual idioma, e qual ainda vale: [docs/README.md](docs/README.md) (índice em inglês) — [a nota de design (zh)](docs/design.zh.md), as [evidências de compatibilidade por versão](docs/compatibility-evidence.md) que sustentam a declaração `dsh.compatibility.dshReleases`, e as notas [arquivadas](docs/archive/) cujo banner nomeia o que as substituiu. Antes de uma mudança ou de um lançamento, siga [TESTING.md](TESTING.md).
-
-## Licença e atribuição
-
-MIT — veja [LICENSE](LICENSE) e [NOTICE](NOTICE). O NOTICE lista com precisão:
-
-- **Código-fonte adaptado/herdado**: DeepSeek Harness (MIT) — `dsh-bash-local` (mecânica do executor), `dsh-fs-local` (`WslFileSystem` o subclassifica) e os agent presets fornecidos (lidos e transformados pelo gerador de variantes);
-- **Referências de design (nenhum código copiado)**: [dsh-bash-terminal](https://github.com/MAXeaglet/dsh-bash-terminal) (MIT, abordagem wsl argv/WSLENV), [dsh-side-panel](https://github.com/ccq1/dsh-side-panel) (BSD-3-Clause, padrão de rota do host), [vpshub](https://github.com/Sdongmaker/vpshub) (MIT, referência de roadmap).
-
-Mantenha `LICENSE` e `NOTICE` ao redistribuir.
-
-## Agradecimentos
-
-Agradecimento especial a [dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-whale) (série de skins 鲸鱼娘 para DSH Web · 深海女仆工坊 maid-atelier, CC BY-NC-SA 4.0): o plugin de skins da garota-baleia traz um conjunto completo de skins adoráveis para a interface web do DeepSeek Harness e torna o uso diário do DSH mais acolhedor.
+Fork mantido de forma independente, não é uma versão oficial do DSH.
+Licença **MIT**: [LICENSE](LICENSE) e [NOTICE](NOTICE).
