@@ -185,8 +185,8 @@ export const Config: z<Config> = z.object({
   metrics: z.boolean(),
 })
 
-/** Services these tools register into. */
-export const inject = ['tools']
+/** Wait for the filesystem owner before choosing its RPC pool; track its replacement/disposal. */
+export const inject = ['tools', 'fs']
 
 /** The tool-execution parameter type of the host suite's spill helper. */
 type SaveExecution = Parameters<typeof trySaveFormattedResult>[1]

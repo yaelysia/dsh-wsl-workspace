@@ -24,6 +24,7 @@
 
 import { APPLICABLE_CLAIMS, CLAIMS, DECLARED_RED_CLAIMS, GREEN_CLAIMS, INAPPLICABLE_CLAIMS } from '../tests/parity/claims.mjs'
 import { writeFileSync } from 'node:fs'
+import { classifyObservations } from './doc-claim-verdicts.mjs'
 
 const jsonFlag = process.argv.indexOf('--json')
 const jsonPath = jsonFlag > 0 ? process.argv[jsonFlag + 1] : undefined
@@ -50,15 +51,8 @@ for (const claim of APPLICABLE_CLAIMS) {
   })
 }
 
-const declared = observations.filter(o => o.declared)
 const undeclared = observations.filter(o => !o.declared)
-// The fourth state, and the one the header below always promised: a claim that could not be run at
-// all. It is not a regression (nothing regressed) and it is not a debt (nobody owes it) — it is a
-// gate that did not run, which cannot be allowed to read as agreement.
-const unevaluable = observations.filter(o => !o.evaluated)
-const owed = declared.filter(o => o.evaluated && !o.ok)
-const paid = declared.filter(o => o.evaluated && o.ok)
-const regressions = undeclared.filter(o => o.evaluated && !o.ok)
+const { owed, paid, regressions, unevaluable } = classifyObservations(observations)
 
 console.log(`docs-claims: ${observations.length} claim(s) — ${GREEN_CLAIMS.length} must hold, `
   + `${DECLARED_RED_CLAIMS.length} declared red`)
