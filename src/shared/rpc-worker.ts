@@ -125,7 +125,7 @@ def execute(req, cancelled, received):
                     raise RuntimeError("file mutation result unknown after cancellation; re-read before retrying")
             for key, _ in streams.select(0.02):
                 if key.data == "input":
-                    try: input_offset += os.write(key.fd, input_bytes[input_offset:input_offset + 65536])
+                    try: input_offset += os.write(key.fd, memoryview(input_bytes)[input_offset:input_offset + 65536])
                     except BlockingIOError: continue
                     except BrokenPipeError: input_offset = len(input_bytes)
                     if input_offset == len(input_bytes):
@@ -146,7 +146,7 @@ def execute(req, cancelled, received):
                     if mutation: raise RuntimeError("file mutation result exceeded its budget; re-read before retrying")
                     # Preserve acceptRun's overflow witness before killing the process group.
                     kill_group(proc)
-                    return {"aborted": False, "code": 0, "stdout": base64.b64encode(out[1:] if file_call else out).decode(), "stderr": base64.b64encode(err).decode()}
+                    return {"aborted": False, "code": 0, "stdout": base64.b64encode(memoryview(out)[1:] if file_call else out).decode(), "stderr": base64.b64encode(err).decode()}
                 if file_call and dest is out and 10 in data:
                     if data[-1:] != b"\n" or out.count(10) != 1:
                         raise RuntimeError("invalid native executor response frame; re-read before retrying")
@@ -156,7 +156,7 @@ def execute(req, cancelled, received):
                 raise RuntimeError("native executor closed without a receipt; re-read before retrying")
             code = out[0] - 48
             keep_file = cancel_at is None and not cancelled.is_set() and proc.poll() is None
-            return {"aborted": False, "code": code, "stdout": base64.b64encode(out[1:]).decode(),
+            return {"aborted": False, "code": code, "stdout": base64.b64encode(memoryview(out)[1:]).decode(),
                     "stderr": base64.b64encode(err).decode()}
         if aborted:
             kill_group(proc)
@@ -251,10 +251,13 @@ finally:
 `
 
 /** Single-line ASCII launch code; search arguments are never embedded in it. */
+// Cache immutable bundled code only, never user input, file data or a worker.
+let cachedBootstrap: string | undefined
 export function rpcWorkerCode(): string {
+  if (cachedBootstrap !== undefined) return cachedBootstrap
   const scripts = Buffer.from(JSON.stringify({ grep: GREP_SCRIPT, glob: GLOB_SCRIPT })).toString('base64')
   const program = `import base64, json\nMETADATA=${JSON.stringify(METADATA)}\nFILE_PROGRAM=${JSON.stringify(NATIVE_FILE_PROGRAM)}\nSCRIPTS=json.loads(base64.b64decode("${scripts}"))\n${PROGRAM}`
   const encoded = deflateSync(Buffer.from(program)).toString('base64')
   if (encoded.length > 24_000) throw new Error('WSL RPC bootstrap exceeds its Windows command-line budget')
-  return `exec(__import__('zlib').decompress(__import__('base64').b64decode('${encoded}')))`
+  return cachedBootstrap = `exec(__import__('zlib').decompress(__import__('base64').b64decode('${encoded}')))`
 }

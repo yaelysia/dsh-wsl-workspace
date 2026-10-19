@@ -1,5 +1,9 @@
 # Windows DSH → WSL continuation checkpoint
 
+## CP13: native I/O performance pass in progress
+
+Base: CP12 `30b9abf7496d818c1f43a69ee50745e924e8a37a`; branch `perf/cp13-native-io`. Read [CP13 scope and measurement](docs/performance-cp13.md). Changes remove full-buffer copies/re-encoding and repeated bootstrap compression; no protocol, permission, version, replay or owner change. Only completed measurements may be claimed. Keep source/lib synchronized; prior Desktop acceptance is historical, not a new UAT.
+
 ## CP12: behaviour-preserving code simplification (2026-10-19)
 
 Base: main `22c3349874e4968f0ca751f3aaa873d43adacd42` after the README rewrite and accepted shared-pool UAT. Branch: `refactor/simplify-rpc-files`.

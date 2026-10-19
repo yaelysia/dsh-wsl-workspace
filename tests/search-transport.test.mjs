@@ -449,3 +449,48 @@ test('native body validation retains filesystem errors when reusing the RPC deco
   data = ''
   assert.deepEqual(await client.read(target('/'), '/file', 0), Buffer.alloc(0))
 })
+
+
+test('optimized byte decoder agrees with the old canonical round-trip rule', async () => {
+  const { decodeRpcBytes } = await import('../src/shared/rpc-transport.ts')
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  const same = (raw, max = 64) => {
+    const decoded = Buffer.from(raw, 'base64')
+    const valid = decoded.length <= max && decoded.toString('base64') === raw
+    if (valid) assert.deepEqual(decodeRpcBytes(raw, max), decoded)
+    else assert.throws(() => decodeRpcBytes(raw, max), /invalid or oversized base64/, JSON.stringify(raw))
+  }
+  for (const a of alphabet) for (const b of alphabet) {
+    same(a + b + '==')
+    same('A' + a + b + '=')
+  }
+  for (const raw of ['', '====', '=AAA', 'AA=A', 'AAAA====', 'AA==AAAA', 'A A=', 'AA\n=', 'AA\r=', 'ＡAAA', '\0AAA', 'AA-_', 'AAAA=']) same(raw)
+  for (const size of [1, 2, 3, 4095, 4096, 65536, 1024 * 1024]) {
+    const bytes = Buffer.alloc(size, 171), raw = bytes.toString('base64')
+    same(raw, size); same(raw, size - 1)
+    same(raw + ' ', size)
+  }
+})
+
+test('oversized canonical data is rejected before allocating its decoded buffer', async () => {
+  const { decodeRpcBytes } = await import('../src/shared/rpc-transport.ts')
+  const raw = Buffer.alloc(1024 * 1024, 7).toString('base64')
+  const original = Buffer.from
+  let allocations = 0
+  Buffer.from = function (...args) { allocations++; return original.apply(this, args) }
+  try { assert.throws(() => decodeRpcBytes(raw, 1), /invalid or oversized base64/) }
+  finally { Buffer.from = original }
+  assert.equal(allocations, 0)
+})
+
+test('cached RPC bootstrap is identical and still a complete bounded Linux program', async () => {
+  const { rpcWorkerCode } = await import('../src/shared/rpc-worker.ts')
+  const { inflateSync } = await import('node:zlib')
+  const first = rpcWorkerCode()
+  for (let i = 0; i < 100; i++) assert.equal(rpcWorkerCode(), first)
+  assert.ok(first.length < 32767 && /^[\x20-\x7e]+$/.test(first))
+  const encoded = /b64decode\('([A-Za-z0-9+/=]+)'\)/.exec(first)?.[1]
+  assert.ok(encoded)
+  const program = inflateSync(Buffer.from(encoded, 'base64')).toString()
+  for (const word of ['FILE_PROGRAM=', 'fs.read', 'fs.write', 'fs.edit', 'start_new_session=True']) assert.ok(program.includes(word))
+})

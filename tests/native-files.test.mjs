@@ -424,3 +424,26 @@ test('native auto selects UNC only before target creation on a failed startup, n
   await assert.rejects(p.writeText(key, 'bad'), /python missing/)
   assert.equal(fallback, 2, 'an observed native target cannot switch to UNC')
 })
+
+
+test('bounded newline sampling preserves the host UTF-16 boundary with non-BMP text', async t => {
+  const { fs, root } = await fixture(t)
+  const hostData = await hostReference(t), host = hostData.fs
+  // A truncated surrogate, CRLF crossing the 4096-code-unit boundary, and
+  // opposite newline styles after the sample must all match the actual host.
+  const bodies = [
+    'a'.repeat(4095) + '🙂\r\n' + 'b\r\n'.repeat(10000),
+    '🙂'.repeat(2047) + '\r\n' + 'b\n'.repeat(10000),
+    '🙂'.repeat(2047) + 'a\r\n' + 'b\r\n'.repeat(10000),
+    'x\r\n'.repeat(1400) + '中\n'.repeat(10000),
+  ].map(body => body + 'TOKEN_A0')
+  for (const [i, body] of bodies.entries()) {
+    const name = 'sample-' + i + '.txt'
+    await writeRaw(root + '/' + name, body); await hostData.write(name, body)
+    const native = await fs.resolve(name), local = await host.resolve(name)
+    const edit = { oldString: 'TOKEN_A0', newString: 'TOKEN_B0', replaceAll: false }
+    const [a, b] = await Promise.all([fs.editText(native, edit), host.editText(local, edit)])
+    assert.equal(a.before, b.before); assert.equal(a.after, b.after)
+    assert.deepEqual(await readRaw(root + '/' + name), await hostData.read(name))
+  }
+})

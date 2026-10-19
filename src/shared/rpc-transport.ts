@@ -65,11 +65,19 @@ function awaitReady(ready: Promise<void>, timeout: number, signal?: AbortSignal)
 }
 
 /** Decode only canonical, bounded base64. Both RPC envelopes and native file bodies use this rule. */
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 export function decodeRpcBytes(raw: unknown, max: number): Buffer {
   if (typeof raw !== 'string') throw new Error('invalid byte payload')
-  const bytes = Buffer.from(raw, 'base64')
-  if (bytes.length > max || bytes.toString('base64') !== raw) throw new Error('invalid or oversized base64')
-  return bytes
+  const padding = raw.endsWith('==') ? 2 : raw.endsWith('=') ? 1 : 0
+  const end = raw.length - padding
+  // Validate canonical alphabet, placement and unused pad bits without re-encoding
+  // the entire decoded buffer. Reject oversized input before allocating that buffer.
+  if (raw.length % 4 !== 0 || raw.length / 4 * 3 - padding > max
+    || raw.search(/[^A-Za-z0-9+/]/) !== (padding ? end : -1)
+    || (padding && (BASE64_ALPHABET.indexOf(raw[end - 1]!) & (padding === 2 ? 15 : 3)) !== 0)) {
+    throw new Error('invalid or oversized base64')
+  }
+  return Buffer.from(raw, 'base64')
 }
 
 class Worker {
@@ -191,7 +199,7 @@ class Worker {
       this.chunkBytes += piece.length
       if (this.chunkBytes > limit) { this.break('search response exceeds its byte budget'); return }
       if (end < 0) return
-      const line = Buffer.concat(this.chunks, this.chunkBytes)
+      const line = this.chunks.length === 1 ? this.chunks[0]! : Buffer.concat(this.chunks, this.chunkBytes)
       this.chunks = []; this.chunkBytes = 0
       try { this.reply(JSON.parse(line.toString('utf8')) as Record<string, unknown>) }
       catch (error) { this.break(`invalid search response: ${String(error)}`); return }
