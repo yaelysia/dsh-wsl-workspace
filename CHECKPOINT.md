@@ -1,37 +1,56 @@
 # Windows DSH → WSL continuation checkpoint
 
-## CP14: traversal reduction in progress
+## CP14: validated traversal reduction
 
-Branch `perf/cp14-prune-enumeration`, baseline CP13 `f7c051a05c279bec181a2ef0257d6b4240fc9ad4`. Read [CP14](docs/performance-cp14.md). This pass prunes fixed-prefix glob traversal and enumerates native directory entries relative to an open directory, with fresh entry metadata and parent identity checks. Do not infer speedup from tests or substitute old Desktop acceptance. Keep matching src/lib and exact before/after measurements. No protocol, mutation, Skill or host changes.
+Active branch: `perf/cp14-prune-enumeration`; [PR #11](https://github.com/yaelysia/dsh-wsl-workspace/pull/11), stacked on CP13 [PR #10](https://github.com/yaelysia/dsh-wsl-workspace/pull/10). Base is `f7c051a05c279bec181a2ef0257d6b4240fc9ad4`. Runtime and matching lib were published at **`f01c7f415374cbff467ecb6456e8685da58057f8`**. The complete tested head is **`f0b0921ed537baf71511e651233637f650867ee8`**; its PR test merge was `2de4da04f614b5f6cc507a36d09012626b388705`. This evidence update changes only Markdown, not that runtime or lib. Check live refs before continuing; none of these facts establishes a main merge or new Desktop GUI acceptance.
 
-## CP13: validated native I/O allocation/performance pass
+Read [final Windows/Linux measurements and evidence](docs/performance-cp14-validation.md) first. [Implementation and initial Linux readings](docs/performance-cp14.md) retain the earlier experiment separately.
 
-Active branch: `perf/cp13-native-io`; [PR #10](https://github.com/yaelysia/dsh-wsl-workspace/pull/10), currently stacked on CP12 [PR #9](https://github.com/yaelysia/dsh-wsl-workspace/pull/9). A branch or green check does not establish a main merge or a new Desktop acceptance. Check live refs before continuing.
+### Delivered behavior
 
-**Read [final cross-platform evidence](docs/performance-cp13-validation.md) first.** All six workflows at `d6b872c1434109eca6735a9fb2f03fdab2e412d1` completed successfully, including actual Windows-to-WSL2 paired measurements. Runtime and matching lib were published at `a7e5d8ea524c13b11f565768f52306a52a19b26a`; the current evidence update only modifies Markdown, not src/lib. Subsequent documentation-triggered checks are separate from that completed runtime matrix.
+- A provable literal-directory prefix from glob patterns is passed as data to the existing Linux find script. Unrelated subtrees are pruned before their files become traversal/transport candidates. The original physical search root, headers, final matcher, sorting, VCS rules and nested-symlink no-follow behavior remain. Negative or uncertain prefixes retain broad traversal. Grep is unchanged.
+- Native listDir opens its parent once and uses fresh descriptor-relative metadata for ordinary entries instead of rewalking their common ancestors. Symlinks still receive physical resolution and target metadata. Parent inode/physical-path replacement is detected before returning. No file content or metadata cache survives the call.
+- Directed queries no longer encounter permission failures inside unrelated pruned subtrees. Explicit root and traversed-directory errors remain. Enumeration can return FS_STALE_VERSION if its parent is replaced; it is not an atomic snapshot of all changing children.
 
-### What is established
+### Measured result, not an inferred blanket speedup
 
-The main benefit is reduced temporary allocation and repeated code-generation work. In the final Windows run, 4 KiB write/edit medians improved about 5.5%/7.0%, but larger-file timings were mixed and some regressed. Do not claim a uniform end-to-end speedup, a decoding acceleration or improved DSH total RSS.
+Windows-to-WSL2, 24 alternating samples after three warm-up pairs, full returned results equal on the same disk fixture:
 
-- Newline sampling on 4 MiB text allocated a peak 8,396,870 bytes before and 12,760 after, for that expression only.
-- Immutable bundled bootstrap compression is cached per module; no file bodies, usernames, mutable worker state or cross-owner pool is cached.
-- One-chunk RPC frames avoid Buffer.concat; private Linux read buffers and short-lived transfer memoryviews avoid full-buffer copies.
-- Canonical Base64 keeps native decode/re-encode validation, with an early size guard. A JavaScript full alphabet scanner was measured, found slower, and rejected. Valid-data decoding is not claimed faster.
+| Operation | CP13 P50 ms | CP14 P50 ms |
+|---|---:|---:|
+| Shallow directory, 24 entries | 2.718 | 2.431 |
+| Deep directory, 2,000 entries | 131.896 | 26.675 |
+| Fixed-prefix glob | 153.668 | 14.135 |
+| No-fixed-prefix control | 153.076 | 154.603 |
 
-Protocol 3, request/file limits, physical-path authorization, version guards, atomic publication, identity/owner isolation, real Loader metadata, startup-only fallback, cancellation acknowledgement and no-replay behavior remain unchanged. No Skill/watch/PTC/UI or DSH host installation/hot-reload changes. User accepts a full DSH restart and leaves the host issue to upstream.
+The first glob scenario has 120 selected .tsx files plus 16,000 irrelevant .tsx files. Returned search candidates fall from 16,120 to 120; raw stdout payload from 1,180,805 to 9,405 bytes. These are decoded search payload bytes, not a physical wire trace. For the deep enumeration, actual os.lstat calls fall from 26,012 to 24 while one fresh stat per entry remains. The no-prefix control has no gain. All P95s, Linux results, full methodology and artifact digests are preserved in the final evidence document.
 
-### Reproduce
+### Completed regression status at f0b0921e
 
-Use Node 24, `npm ci`, then `node ci/install-pinned.mjs`. Existing `test:unit`, `test:node`, `test:search-transport`, `test:native-files`, `test:rpc-loader`, `test:rpc-owner`, `test:rpc-mixed`, `test:rpc-busy`, `typecheck:gate` and `verify:install` remain the regression entrypoints. Repeat native/Loader/owner/mixed/busy with `DSH_WSL_TEST_PLANE=lib`; the busy test actually exceeds 120 seconds. Windows must use a real distribution, not the Linux launcher as a substitute.
+All jobs of the following seven workflows were read back completed/success:
 
-`npm run bench:native-rpc -- --baseline <CP12-worktree> --iterations 24 --output <json>` compares actual warm resolve+stat+read/guarded-write/edit sequences against `30b9abf7496d818c1f43a69ee50745e924e8a37a`, alternating order and verifying returned/disk bytes and versions. Follow `.github/workflows/native-rpc-performance.yml` for dependency/WSL2 setup; its repository permission is read-only. The permanent script retains raw samples. Artifact IDs/digests and all rows, including regressions, are in the final evidence document.
+| Check | Run |
+|---|---|
+| Traversal contracts and Linux/Windows-WSL2 paired measurement | [39222709579](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39222709579) |
+| Full committed-artifact, pinned-host and WSL1/WSL2 compatibility | [39222709414](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39222709414) |
+| Native files, owner/mixed lifecycle and real 125-second busy lifetime | [39222709434](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39222709434) |
+| Reported-host actual Loader | [39222709474](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39222709474) |
+| Search/RPC | [39222709760](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39222709760) |
+| Existing native-RPC comparison | [39222709477](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39222709477) |
+| Persona compatibility | [39222709586](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39222709586) |
 
-### Handoff and earlier checkpoints
+New traversal regressions are 7/7 on both source and shipped-library provider/tool paths under Linux, Windows/WSL1 and Windows/WSL2. WSL1 timing comparison is intentionally not run. Pure helper/profiler checks read source; the actual provider and registered glob are tested on both planes. Existing platform/dependency skips stay explicit, and the historical 209-error type baseline is neither increased nor cleared. Documentation-triggered later jobs are distinct from this completed runtime validation.
 
-Temporary delivery scripts/workflows were removed before d6b872c1. No plugin package is sent to the user, no npm release is made and no local installation/profile is edited. Source and committed lib must remain synchronized. The 209-error historical type baseline was not raised or cleared. CP11's previous Desktop acceptance is not a new CP12/CP13 test.
+The first preparation run 39221746263 failed before applying runtime changes; its logs remain. Successful delivery [39222238912](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39222238912) tested a clean CP13 baseline, applied exact hash-guarded edits, built and ran old/new contracts, measured and published matching src/lib with a branch lease. Temporary publishing files were deleted at f0b0921e; the retained traversal workflow has read-only repository permissions.
 
-- [CP13 implementation and experiment log](docs/performance-cp13.md) preserves the rejected scanner and earlier Linux comparison.
-- [Complete pre-validation CP13 checkpoint](https://github.com/yaelysia/dsh-wsl-workspace/blob/d6b872c1434109eca6735a9fb2f03fdab2e412d1/CHECKPOINT.md) preserves delivery SHAs and detailed commands.
-- [CP12 checkpoint](https://github.com/yaelysia/dsh-wsl-workspace/blob/30b9abf7496d818c1f43a69ee50745e924e8a37a/CHECKPOINT.md) preserves simplification, CP11 user acceptance, CP10 Loader repair and links to CP0–CP9.
-- CP12's stalled WSL2 setup job was ultimately cancelled; rerunning the original job without code/assertion changes closed its five-workflow matrix successfully. [Recorded on PR #9](https://github.com/yaelysia/dsh-wsl-workspace/pull/9#issuecomment-6261897179). That is validation, not a main merge.
+### Reproduce and continue
+
+Use Node 24, `npm ci`, then `node ci/install-pinned.mjs`. Run `npm run test:traversal`, then repeat with `DSH_WSL_TEST_PLANE=lib`. Existing `test:unit`, `test:node`, `test:search-transport`, `test:native-files`, `test:rpc-loader`, `test:rpc-owner`, `test:rpc-mixed`, `test:rpc-busy`, `typecheck:gate`, `test:docs`, `test:docs-claims`, `verify:install` and reproducible build remain required.
+
+For measurement use `npm run bench:traversal -- --baseline <CP13-worktree> --iterations 24 --output <json>`; baseline must equal f7c051a0. See `.github/workflows/traversal-performance.yml` for shared dependency setup and actual WSL-version verification. Do not substitute Linux-native timings for Windows or count model/GUI wait in these provider timings.
+
+No mutation/permission/version/atomic-publication or unknown-result/no-replay changes; no extra worker, dependency, configuration, global cross-owner pool, Skill/watch/PTC or host hot-reload work. DSH host updates stay with upstream; the user accepts full restart. No user profile, local installation, private evidence or npm release was changed. Do not send an installable package.
+
+### Earlier checkpoints
+
+[Complete checkpoint before this evidence update](https://github.com/yaelysia/dsh-wsl-workspace/blob/f0b0921ed537baf71511e651233637f650867ee8/CHECKPOINT.md) preserves CP13 validation and links to CP12, CP11 Desktop acceptance, CP10 Loader repair and CP0–CP9. [CP13 results](docs/performance-cp13-validation.md) remain an allocation-oriented pass with mixed latency, not the much larger gains of this separately measured traversal pass. Earlier PRs #9 and #10 remain independent stacked dependencies; inspect live states before merging.
