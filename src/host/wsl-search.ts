@@ -1065,4 +1065,5 @@ export function registerGuidance(ctx: Context): void {
   }
 }
 
-export default apply
+// Loader selects the default export; keep dependency and schema metadata on it.
+export default { apply, inject, Config }
