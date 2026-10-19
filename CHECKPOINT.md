@@ -1,59 +1,33 @@
 # Windows DSH → WSL continuation checkpoint
 
-## CP13: native I/O performance pass
+## CP13: validated native I/O allocation/performance pass
 
-Active branch: `perf/cp13-native-io`, based on CP12 `30b9abf7496d818c1f43a69ee50745e924e8a37a` (PR #9). This continues the already implemented/accepted file and shared-RPC architecture, not a new WSL agent. Source and matching `lib/` for the revised candidate are committed at **`a7e5d8ea524c13b11f565768f52306a52a19b26a`**. The following cleanup only removes temporary delivery files, adds repeatable cross-platform measurements and updates this record.
+Active branch: `perf/cp13-native-io`; [PR #10](https://github.com/yaelysia/dsh-wsl-workspace/pull/10), currently stacked on CP12 [PR #9](https://github.com/yaelysia/dsh-wsl-workspace/pull/9). A branch or green check does not establish a main merge or a new Desktop acceptance. Check live refs before continuing.
 
-Read [scope, rejected candidate and measurements](docs/performance-cp13.md) first. A branch having files does not by itself establish a main merge or a new Desktop acceptance.
+**Read [final cross-platform evidence](docs/performance-cp13-validation.md) first.** All six workflows at `d6b872c1434109eca6735a9fb2f03fdab2e412d1` completed successfully, including actual Windows-to-WSL2 paired measurements. Runtime and matching lib were published at `a7e5d8ea524c13b11f565768f52306a52a19b26a`; the current evidence update only modifies Markdown, not src/lib. Subsequent documentation-triggered checks are separate from that completed runtime matrix.
 
-### Delivered changes
+### What is established
 
-- Keep Node's existing canonical Base64 decode/re-encode validation. Add only a constant-time length precheck so oversized data is rejected before buffer allocation. A full JavaScript alphabet scan was tested and **rejected for slowing large-file calls**.
-- Avoid Buffer.concat for a complete one-chunk RPC frame; fragmented framing retains the same accumulator and byte limits.
-- Reuse the private Python bytearray returned by read_bytes and short-lived memoryview slices during RPC transfer, instead of copying full native buffers.
-- Limit the source prefix before UTF-16 newline sampling while preserving the exact 4096-code-unit boundary and surrogate behavior.
-- Cache the immutable bundled bootstrap string per module. No file-content cache, mutable global pool, user-specific state or new worker is introduced.
+The main benefit is reduced temporary allocation and repeated code-generation work. In the final Windows run, 4 KiB write/edit medians improved about 5.5%/7.0%, but larger-file timings were mixed and some regressed. Do not claim a uniform end-to-end speedup, a decoding acceleration or improved DSH total RSS.
 
-### Evidence already completed
+- Newline sampling on 4 MiB text allocated a peak 8,396,870 bytes before and 12,760 after, for that expression only.
+- Immutable bundled bootstrap compression is cached per module; no file bodies, usernames, mutable worker state or cross-owner pool is cached.
+- One-chunk RPC frames avoid Buffer.concat; private Linux read buffers and short-lived transfer memoryviews avoid full-buffer copies.
+- Canonical Base64 keeps native decode/re-encode validation, with an early size guard. A JavaScript full alphabet scanner was measured, found slower, and rejected. Valid-data decoding is not claimed faster.
 
-- [First delivery](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39214043822): behavior passed, but the new alphabet scan made large-file timings worse. Its runtime `5ab03baf29cfeced9c5714ce258bd969dabaae97` and readings remain in history; do not present them as an accepted optimization.
-- [Revised delivery](https://github.com/yaelysia/dsh-wsl-workspace/actions/runs/39214557044): source/build, unit, fixed-host, native files, Loader, owner, mixed load, RPC, type-baseline, documentation, clean installation and reproducible build passed; published `a7e5d8ea` after checking the branch lease.
-- The second Linux comparison has 16 alternating samples per backend and size. Large-file read/edit medians improved modestly, while writes were effectively flat and some rows had outliers. This is not Windows latency or a blanket speedup. Full readings: [Linux JSON](docs/performance-cp13-linux.json).
-- Added regressions cover 8192 padding combinations against the original canonicality rule, pre-allocation oversized rejection, repeated valid bootstrap generation and actual-host non-BMP/CRLF edit comparisons. Protocol errors, guards, cancellation and no-replay tests remain.
+Protocol 3, request/file limits, physical-path authorization, version guards, atomic publication, identity/owner isolation, real Loader metadata, startup-only fallback, cancellation acknowledgement and no-replay behavior remain unchanged. No Skill/watch/PTC/UI or DSH host installation/hot-reload changes. User accepts a full DSH restart and leaves the host issue to upstream.
 
-The final PR runs existing cross-platform suites plus `native-rpc-performance` on Linux and Windows/WSL2. Read completed results for the exact PR head; not-yet-finished checks do not count as passes. Temporary publishing scripts are removed and the permanent measurement workflow has read-only repository permissions.
+### Reproduce
 
-### Reproduce and continue
+Use Node 24, `npm ci`, then `node ci/install-pinned.mjs`. Existing `test:unit`, `test:node`, `test:search-transport`, `test:native-files`, `test:rpc-loader`, `test:rpc-owner`, `test:rpc-mixed`, `test:rpc-busy`, `typecheck:gate` and `verify:install` remain the regression entrypoints. Repeat native/Loader/owner/mixed/busy with `DSH_WSL_TEST_PLANE=lib`; the busy test actually exceeds 120 seconds. Windows must use a real distribution, not the Linux launcher as a substitute.
 
-Node 24 development checkout:
+`npm run bench:native-rpc -- --baseline <CP12-worktree> --iterations 24 --output <json>` compares actual warm resolve+stat+read/guarded-write/edit sequences against `30b9abf7496d818c1f43a69ee50745e924e8a37a`, alternating order and verifying returned/disk bytes and versions. Follow `.github/workflows/native-rpc-performance.yml` for dependency/WSL2 setup; its repository permission is read-only. The permanent script retains raw samples. Artifact IDs/digests and all rows, including regressions, are in the final evidence document.
 
-```text
-npm ci
-node ci/install-pinned.mjs
-npm run test:unit
-npm run test:node
-npm run test:search-transport
-npm run test:native-files
-npm run test:rpc-loader
-npm run test:rpc-owner
-npm run test:rpc-mixed
-npm run test:rpc-busy
-npm run typecheck:gate
-npm run verify:install
-```
+### Handoff and earlier checkpoints
 
-Repeat native/Loader/owner/mixed/busy with `DSH_WSL_TEST_PLANE=lib`. `test:rpc-busy` actually runs beyond the 120-second idle timeout. Windows uses the real `WSL_COMPAT_DISTRO`; Linux cannot stand in for Windows results.
+Temporary delivery scripts/workflows were removed before d6b872c1. No plugin package is sent to the user, no npm release is made and no local installation/profile is edited. Source and committed lib must remain synchronized. The 209-error historical type baseline was not raised or cleared. CP11's previous Desktop acceptance is not a new CP12/CP13 test.
 
-`npm run bench:native-rpc -- --baseline <CP12 worktree> --iterations 24 --output <json>` reuses the existing native fixture and compares actual resolve+stat+read/guarded-write/edit calls. See `.github/workflows/native-rpc-performance.yml` for baseline checkout and dependency setup. Timings and Python sampling allocations are separately labeled; none are model/GUI latency or total process RSS.
-
-### Boundaries
-
-Never replay a dispatched mutation, silently fall back to UNC after an unknown write, weaken physical-path authorization or version/atomic-publication guarantees, discard Loader default metadata or share workers across owners. Existing size/queue/identity limits and error mappings remain. The historical 209-error type baseline was not raised or cleared. No new raw user evidence was uploaded, and prior CP11 acceptance is not a fresh test of CP12 or CP13.
-
-DSH host installation/hot reload stays with upstream; the user accepts complete restart. No Skill adaptation, watch, PTC migration, unrelated UI, npm release, local profile edit or downloadable plugin package belongs to this pass.
-
-## Earlier checkpoints
-
-[Complete pre-CP13 checkpoint at CP12](https://github.com/yaelysia/dsh-wsl-workspace/blob/30b9abf7496d818c1f43a69ee50745e924e8a37a/CHECKPOINT.md) preserves CP11 user acceptance, CP10 Loader repair and links to CP0–CP9.
-
-[CP12 simplification](docs/code-simplification-cp12.md) remains separately tracked in [PR #9](https://github.com/yaelysia/dsh-wsl-workspace/pull/9). Its formerly stalled WSL2 environment job was requested to rerun without code/assertion changes; consult its latest status before describing that complete matrix as green. The original main baseline is `22c3349874e4968f0ca751f3aaa873d43adacd42` (README rewrite).
+- [CP13 implementation and experiment log](docs/performance-cp13.md) preserves the rejected scanner and earlier Linux comparison.
+- [Complete pre-validation CP13 checkpoint](https://github.com/yaelysia/dsh-wsl-workspace/blob/d6b872c1434109eca6735a9fb2f03fdab2e412d1/CHECKPOINT.md) preserves delivery SHAs and detailed commands.
+- [CP12 checkpoint](https://github.com/yaelysia/dsh-wsl-workspace/blob/30b9abf7496d818c1f43a69ee50745e924e8a37a/CHECKPOINT.md) preserves simplification, CP11 user acceptance, CP10 Loader repair and links to CP0–CP9.
+- CP12's stalled WSL2 setup job was ultimately cancelled; rerunning the original job without code/assertion changes closed its five-workflow matrix successfully. [Recorded on PR #9](https://github.com/yaelysia/dsh-wsl-workspace/pull/9#issuecomment-6261897179). That is validation, not a main merge.
