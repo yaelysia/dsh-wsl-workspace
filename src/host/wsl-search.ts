@@ -75,9 +75,9 @@ import { decodeWslOutput, defaultDistroSync } from '../shared/wsl.ts'
 import { getWorkspaceUsername } from '../shared/wsl-credentials.ts'
 import { basenameFilters, compileGlob, expandBraces } from '../shared/search-patterns.ts'
 import { GREP_SCRIPT, GLOB_SCRIPT } from '../shared/search-scripts.ts'
-import { WslRpcPool, RpcTransportError } from '../shared/rpc-transport.ts'
+import { WslRpcPool, RpcTransportError, type RpcRun as WslRun } from '../shared/rpc-transport.ts'
 import { resolveRpcConfig, RPC_DEFAULTS } from '../shared/rpc-config.ts'
-import { RpcMetrics, registerRpcDiagnostics, type Outcome } from '../shared/rpc-metrics.ts'
+import { RpcMetrics, rpcRunOutcome, registerRpcDiagnostics, type Outcome } from '../shared/rpc-metrics.ts'
 export { WslRpcPool } from '../shared/rpc-transport.ts'
 export { readMetadata } from '../shared/rpc-files.ts'
 export { rpcDiagnostics as performanceSnapshot } from '../shared/rpc-metrics.ts'
@@ -614,21 +614,6 @@ export function buildWslArgv(
   ]
 }
 
-/** One completed in-distro run: its exit code, raw stdout, raw stderr and kill signal. */
-interface WslRun {
-  code: number | null
-  stdout: Buffer
-  /**
-   * Bytes, not text. `wsl.exe` answers in UTF-16LE on most Windows builds, and decoding here is what
-   * put a NUL between every character of the detail, made the 300-character budget count bytes, and
-   * stopped the invalid-pattern classifier from ever matching. One decode policy
-   * ({@link decodeWslOutput}) runs where the text is used.
-   */
-  stderr: Buffer
-  aborted: boolean
-  signal: NodeJS.Signals | null
-}
-
 /**
  * Run one fixed script inside the distribution.
  *
@@ -785,8 +770,7 @@ function createSearchRunner(ctx: Context, config: ResolvedConfig): { run: Search
     try {
       const result = await runInDistro(buildWslArgv(target, op === 'grep' ? GREP_SCRIPT : GLOB_SCRIPT, values),
         config.wslPath, timeout, config.rawOutputMaxBytes, signal)
-      outcome = result.aborted ? 'aborted' : result.stdout.length > config.rawOutputMaxBytes ? 'overflow'
-        : result.code === 0 || (op === 'grep' && result.code === 1) ? 'ok' : 'error'
+      outcome = rpcRunOutcome(result, op, config.rawOutputMaxBytes)
       return result
     } finally { metrics.record(`oneshot.${op}`, performance.now() - start, outcome) }
   }
@@ -1013,10 +997,7 @@ function registerGlob(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
         ? (left, right) => left.mtimeMs - right.mtimeMs || left.path.localeCompare(right.path)
         : (left, right) => left.path.localeCompare(right.path))
       const root = input.path === undefined ? '.' : displayPath(rootAbsolute, target.linuxCwd)
-      const paths: string[] = []
-      for (const file of selected) {
-        paths.push(displayPath(file.path, target.linuxCwd))
-      }
+      const paths = selected.map(file => displayPath(file.path, target.linuxCwd))
       if (paths.length <= caps.maxResults) return { root, paths }
       const spill = await trySaveFormattedResult(
         ctx,

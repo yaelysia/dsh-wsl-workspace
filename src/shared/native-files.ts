@@ -1,5 +1,5 @@
 /** Typed consumer of the shared RPC. No host package at runtime; the provider maps its errors. */
-import { RpcTransportError, WslRpcPool, type RpcTarget } from './rpc-transport.ts'
+import { decodeRpcBytes, RpcTransportError, WslRpcPool, type RpcTarget } from './rpc-transport.ts'
 import { performance } from 'node:perf_hooks'
 import type { FsErrorCode, FsEditRequest, FsWriteIntent } from '@deepseek-ai/dsh-fs'
 import type { Outcome, RpcMethod } from './rpc-metrics.ts'
@@ -107,10 +107,8 @@ export class NativeFileClient {
   }
   private bytes(value: unknown, max: number): Buffer {
     const data = (value as { data?: unknown })?.data
-    if (typeof data !== 'string') invalid()
-    const bytes = Buffer.from(data, 'base64')
-    if (bytes.length > max || bytes.toString('base64') !== data) invalid()
-    return bytes
+    try { return decodeRpcBytes(data, max) }
+    catch { invalid() }
   }
   async list(target: RpcTarget, path: string, options?: NativeOptions): Promise<NativeEntry[]> {
     const rows = await this.call(target, 'fs.list', { path }, options)

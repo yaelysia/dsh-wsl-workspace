@@ -3,7 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
 import { decodeWslOutput } from './wsl.ts'
 import { rpcWorkerCode } from './rpc-worker.ts'
-import { RPC_METHODS, RpcMetrics, type Outcome, type RpcMethod } from './rpc-metrics.ts'
+import { RPC_METHODS, RpcMetrics, rpcRunOutcome, type Outcome, type RpcMethod } from './rpc-metrics.ts'
 
 export interface RpcTarget { distro: string; username?: string; linuxCwd: string; wslPath: string }
 export interface RpcTiming { readyMs: number; roundTripMs: number; queueMs?: number; executionMs?: number }
@@ -62,6 +62,14 @@ function awaitReady(ready: Promise<void>, timeout: number, signal?: AbortSignal)
     signal?.addEventListener('abort', cancel, { once: true })
     ready.then(() => { cleanup(); resolve() }, error => { cleanup(); reject(error) })
   })
+}
+
+/** Decode only canonical, bounded base64. Both RPC envelopes and native file bodies use this rule. */
+export function decodeRpcBytes(raw: unknown, max: number): Buffer {
+  if (typeof raw !== 'string') throw new Error('invalid byte payload')
+  const bytes = Buffer.from(raw, 'base64')
+  if (bytes.length > max || bytes.toString('base64') !== raw) throw new Error('invalid or oversized base64')
+  return bytes
 }
 
 class Worker {
@@ -212,12 +220,6 @@ class Worker {
     let result: RpcRun | undefined
     if (typeof value.error !== 'string') {
       if (typeof value.aborted !== 'boolean' || (value.code !== null && !Number.isSafeInteger(value.code))) throw new Error('invalid status')
-      const decode = (raw: unknown, max: number): Buffer => {
-        if (typeof raw !== 'string') throw new Error('invalid byte payload')
-        const bytes = Buffer.from(raw, 'base64')
-        if (bytes.length > max || bytes.toString('base64') !== raw) throw new Error('invalid or oversized base64')
-        return bytes
-      }
       const timing: RpcTiming = { readyMs: pending.readyMs, roundTripMs: performance.now() - pending.sentAt }
       if (value.timing !== undefined) {
         const native = value.timing as { queueMs?: number; executionMs?: number }
@@ -228,7 +230,7 @@ class Worker {
       }
       const code = value.code as number | null
       result = { timing, code, aborted: value.aborted || (code !== null && code < 0), signal: null,
-        stdout: decode(value.stdout, pending.maxBytes + 1), stderr: decode(value.stderr, MAX_REQUEST) }
+        stdout: decodeRpcBytes(value.stdout, pending.maxBytes + 1), stderr: decodeRpcBytes(value.stderr, MAX_REQUEST) }
     }
     this.pending.delete(id)
     pending.cleanup()
@@ -241,28 +243,23 @@ class Worker {
   }
 
   private break(message: string): void {
-    if (this.closed) return
-    const error = new RpcTransportError(message, this.booted ? 'request' : 'startup')
-    this.rejectReady(error)
-    for (const pending of this.pending.values()) {
-      pending.cleanup(); clearTimeout(pending.cancelTimer)
-      if (!pending.answered) pending.fail(pending.mutating ? mutationUnknown(message) : error)
-    }
-    this.pending.clear()
-    this.dispose()
+    this.close(new RpcTransportError(message, this.booted ? 'request' : 'startup'))
   }
 
-  dispose(): void {
+  dispose(): void { this.close() }
+
+  /** One terminal path; faults reject reads, explicit disposal cancels them, and writes remain unknown. */
+  private close(error?: RpcTransportError): void {
     if (this.closed) return
     this.closed = true
     clearTimeout(this.idleTimer); clearTimeout(this.bootTimer)
-    this.rejectReady(new RpcTransportError('search transport disposed', 'request'))
+    this.rejectReady(error ?? new RpcTransportError('search transport disposed', 'request'))
     for (const pending of this.pending.values()) {
       pending.cleanup(); clearTimeout(pending.cancelTimer)
-      if (!pending.answered) {
-        if (pending.mutating) pending.fail(mutationUnknown('provider disposed before acknowledgement'))
-        else pending.done(abortedRun())
-      }
+      if (pending.answered) continue
+      if (pending.mutating) pending.fail(mutationUnknown(error?.message ?? 'provider disposed before acknowledgement'))
+      else if (error) pending.fail(error)
+      else pending.done(abortedRun())
     }
     this.pending.clear()
     this.chunks = []; this.chunkBytes = 0
@@ -313,8 +310,7 @@ export class WslRpcPool {
     let outcome: Outcome = 'error'
     try {
       const result = await this.runRequest(target, request)
-      outcome = result.aborted ? 'aborted' : result.stdout.length > request.maxBytes ? 'overflow'
-        : result.code === 0 || (request.op === 'grep' && result.code === 1) ? 'ok' : 'error'
+      outcome = rpcRunOutcome(result, request.op, request.maxBytes)
       if (result.timing) {
         const times = result.timing
         for (const [stage, ms] of [['ready', times.readyMs], ['roundTrip', times.roundTripMs],
