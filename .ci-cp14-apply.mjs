@@ -37,11 +37,11 @@ replace('src/host/wsl-search.ts',
 replace('src/host/wsl-search.ts',
   "      const values = [linuxTarget(input.path), String(config.rawOutputMaxBytes + 1), ...basenameFilters([input.pattern])]",
   "      const prefix = globDirectoryPrefix(input.pattern)\n      const values = [linuxTarget(input.path), String(config.rawOutputMaxBytes + 1),\n        ...(prefix === undefined ? [] : ['', prefix]), ...basenameFilters([input.pattern])]")
-// Empty marker cannot collide with any nonempty filename hint. Legacy script argv remains supported.
 const prefixParse = [
   'prefix=',
   'if [ "$#" -ge 2 ] && [ "$1" = "" ]; then prefix=$2; shift 2; fi',
 ]
+// @ before a variable is a generation placeholder; the @ inside [@] is real Bash syntax.
 const scoped = String.raw`scope=()
 if [ -n "@prefix" ]; then
   literal_path() {
@@ -60,11 +60,10 @@ if [ -n "@prefix" ]; then
     literal_path "@cursor"
     allowed+=(-o -path "@escaped")
   done
-  # Start at the original root: never turn a directory symlink into a traversal root.
-  # Only ancestors and the selected subtree are traversed; output keeps its original coordinates.
+  # Keep the original root: a directory symlink must never become a traversal root.
   allowed+=(-o -path "@escaped/*")
   scope=(-type d ! '(' "@{allowed[@]}" ')' -prune -o -path "@escaped/*")
-fi`.replaceAll('@', '$').split('\n')
+fi`.replace(/@(?=[A-Za-z0-9{])/g, '$').split('\n')
 const arrayLines = lines => lines.map(line => '  ' + JSON.stringify(line) + ',').join('\n')
 replace('src/shared/search-scripts.ts', "  'target=$1; cap=$2; shift 2',", "  'target=$1; cap=$2; shift 2',\n" + arrayLines(prefixParse))
 replace('src/shared/search-scripts.ts', "  'if find --version 2>/dev/null | head -n 1 | grep -q GNU; then',", arrayLines(scoped) + "\n  'if find --version 2>/dev/null | head -n 1 | grep -q GNU; then',")
@@ -90,7 +89,7 @@ replace('src/shared/native-file-worker.ts', String.raw`        result = []
             with os.scandir(directory) as entries:
                 for entry in entries:
                     resolved = os.path.join(path, entry.name)
-                    # Fresh descriptor-relative metadata: no repeated walk of common ancestors.
+                    # Fresh descriptor-relative metadata; common ancestors are not walked N times.
                     s = probe(entry.name, False, directory)
                     if s is not None and stat.S_ISLNK(s.st_mode):
                         resolved = canonical(resolved)
