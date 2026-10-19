@@ -5,6 +5,7 @@ on:
     paths: ['.ci-cp14-apply.mjs', '.github/workflows/cp14-delivery.yml', 'tests/traversal-performance.test.mjs', 'scripts/benchmark-traversal.mjs']
 permissions:
   contents: write
+  actions: read
 concurrency:
   group: cp14-delivery
   cancel-in-progress: false
@@ -22,13 +23,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Preserve the first preparation failure attribution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/12172211646/zip" > "$RUNNER_TEMP/cp14-first.zip"
+          python3 -c 'import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);[print(n+"\n"+z.read(n).decode("utf-8")[-18000:]) for n in z.namelist() if n.endswith(".log")]' "$RUNNER_TEMP/cp14-first.zip"
       - run: npm ci
       - run: node ci/install-pinned.mjs
-      - name: Check baseline and apply the reviewed transform
+      - name: Check the clean CP13 baseline and apply reviewed changes
         run: |
           mkdir -p logs
-          npm run test:unit > logs/baseline-unit.log 2>&1
-          npm run test:search-prefilter > logs/baseline-prefilter.log 2>&1
+          git worktree add --detach "$RUNNER_TEMP/cp14-base" f7c051a05c279bec181a2ef0257d6b4240fc9ad4
+          node -e "require('node:fs').symlinkSync(require('node:path').resolve('node_modules'), process.env.RUNNER_TEMP+'/cp14-base/node_modules', 'dir')"
+          (cd "$RUNNER_TEMP/cp14-base" && npm run test:unit) 2>&1 | tee logs/baseline-unit.log
+          (cd "$RUNNER_TEMP/cp14-base" && npm run test:search-prefilter) 2>&1 | tee logs/baseline-prefilter.log
+          git worktree remove --force "$RUNNER_TEMP/cp14-base"
           node --check .ci-cp14-apply.mjs
           node .ci-cp14-apply.mjs
       - name: Build, actual execution and unchanged behavior contracts
@@ -37,16 +47,11 @@ jobs:
           npm run build 2>&1 | tee logs/build.log
           npm run test:traversal 2>&1 | tee logs/traversal-src.log
           DSH_WSL_TEST_PLANE=lib npm run test:traversal 2>&1 | tee logs/traversal-lib.log
-          npm run test:unit > logs/unit.log 2>&1
-          npm run test:node > logs/node.log 2>&1
-          npm run test:search-transport > logs/rpc.log 2>&1
-          npm run test:native-files > logs/native-src.log 2>&1
-          DSH_WSL_TEST_PLANE=lib npm run test:native-files > logs/native-lib.log 2>&1
-          DSH_WSL_TEST_PLANE=lib npm run test:rpc-loader > logs/loader-lib.log 2>&1
-          npm run typecheck:gate > logs/types.log 2>&1
-          npm run test:docs > logs/docs.log 2>&1
-          npm run test:docs-claims > logs/docs-claims.log 2>&1
-          npm run verify:install > logs/install.log 2>&1
+          for task in test:unit test:node test:search-transport test:native-files typecheck:gate test:docs test:docs-claims verify:install; do
+            npm run "$task" > "logs/${task//:/-}.log" 2>&1 || { cat "logs/${task//:/-}.log"; exit 1; }
+          done
+          DSH_WSL_TEST_PLANE=lib npm run test:native-files 2>&1 | tee logs/native-lib.log
+          DSH_WSL_TEST_PLANE=lib npm run test:rpc-loader 2>&1 | tee logs/loader-lib.log
           git add src lib tests package.json scripts/benchmark-traversal.mjs CHECKPOINT.md docs/performance-cp14.md
           npm run build > logs/rebuild.log 2>&1
           git diff --exit-code -- lib
@@ -54,7 +59,7 @@ jobs:
         run: |
           git worktree add --detach .cp14-baseline f7c051a05c279bec181a2ef0257d6b4240fc9ad4
           node -e "require('node:fs').symlinkSync(require('node:path').resolve('node_modules'), '.cp14-baseline/node_modules', 'dir')"
-          npm run bench:traversal -- --baseline .cp14-baseline --iterations 20 --output logs/performance.json > logs/benchmark.log 2>&1
+          npm run bench:traversal -- --baseline .cp14-baseline --iterations 20 --output logs/performance.json > logs/benchmark.log 2>&1 || { cat logs/benchmark.log; exit 1; }
           cp logs/performance.json docs/performance-cp14-linux.json
           node --input-type=module <<'NODE'
           import {readFileSync,appendFileSync} from 'node:fs'
