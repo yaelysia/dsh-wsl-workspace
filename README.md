@@ -153,6 +153,8 @@ The authoritative declaration is in [`package.json`](package.json); see
 [Docs index](docs/README.md) · [Testing](TESTING.md) ·
 [Changelog](CHANGELOG.md) · [Latest engineering checkpoint](CHECKPOINT.md)
 
+### Other languages
+
 Other-language quick guides (the English and Chinese guides contain the full details):
 [日本語](README.ja.md) · [한국어](README.ko.md) · [Français](README.fr.md) ·
 [Deutsch](README.de.md) · [Español](README.es.md) ·

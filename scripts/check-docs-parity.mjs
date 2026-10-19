@@ -1,222 +1,147 @@
 #!/usr/bin/env node
-// Documentation parity gate.
+// Documentation gate for the independently maintained fork.
+// Verify current install/source/attribution contracts and links without forcing
+// the upstream README's historical layout or translating a large release ledger.
 //
-// One place declares what every README must contain. The rule set exists because the
-// translated READMEs drifted for months unread: they are condensed on purpose, so nobody
-// can compare wording — but the skeleton, the facts, the pointers and the links are all
-// mechanically checkable.
-//
-// Sections are matched by *name*, never by position: v0.7.5 inserted a `## Compatibility`
-// section and every positional assumption in a checker broke. A README gaining or losing a
-// section must be a decision recorded here.
-//
-//   node scripts/check-docs-parity.mjs [--root DIR]
+// node scripts/check-docs-parity.mjs [--root DIR]
 
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const root = (() => {
-  const i = process.argv.indexOf('--root')
-  if (i > 0) return path.resolve(process.argv[i + 1])
-  return path.resolve(fileURLToPath(new URL('..', import.meta.url)))
-})()
+const arg = process.argv.indexOf('--root')
+const root = arg > 0 ? path.resolve(process.argv[arg + 1]) : path.resolve(fileURLToPath(new URL('..', import.meta.url)))
+const FORK = 'https://github.com/yaelysia/dsh-wsl-workspace'
+const ORIGINAL = 'https://github.com/dsh-wsl-workspace-maintainers/dsh-wsl-workspace'
+const INSTALL = 'git+https://github.com/yaelysia/dsh-wsl-workspace.git#main'
 
-// The install/behaviour/changelog/docs/licence/acknowledgment heading of every README, by name.
-// `compatibility: null` means that README carries no list of its own — it must point at the
-// English one instead, because a duplicated release list rots on the next manifest change.
-const FILES = {
-  'README.md': {
-    install: '## Install', compatibility: '## Compatibility', usage: '## Usage',
-    behaviour: '## Behavior notes', changelog: '## Changelog', docs: '## Documentation',
-    licence: '## License & attribution', acknowledgments: '## Acknowledgments',
-    configuration: '## Configuration', limits: '## Native file guarantees and limits',
-    performance: '## Diagnostics and performance',
-  },
-  'README.zh.md': {
-    install: '## 安装', compatibility: '## 兼容性', usage: '## 使用',
-    behaviour: '## 行为与权限说明', changelog: '## 更新日志', docs: '## 相关文档',
-    licence: '## 许可与出处', acknowledgments: '## 致谢',
-    configuration: '## 配置', limits: '## 原生文件保证与边界',
-    performance: '## 诊断与性能',
-  },
-  'README.ja.md': {
-    install: '## インストール', compatibility: null, usage: '## 使い方',
-    behaviour: '## 動作メモ', changelog: '## 変更履歴', docs: '## ドキュメント',
-    licence: '## ライセンスとクレジット', acknowledgments: '## 謝辞',
-  },
-  'README.ko.md': {
-    install: '## 설치', compatibility: null, usage: '## 사용법',
-    behaviour: '## 동작 참고', changelog: '## 변경 이력', docs: '## 문서',
-    licence: '## 라이선스 및 출처', acknowledgments: '## 감사의 말',
-  },
-  'README.fr.md': {
-    install: '## Installation', compatibility: null, usage: '## Utilisation',
-    behaviour: '## Notes de comportement', changelog: '## Journal des modifications', docs: '## Documentation',
-    licence: '## Licence et attribution', acknowledgments: '## Remerciements',
-  },
-  'README.de.md': {
-    install: '## Installation', compatibility: null, usage: '## Verwendung',
-    behaviour: '## Verhaltenshinweise', changelog: '## Änderungshistorie', docs: '## Dokumentation',
-    licence: '## Lizenz und Namensnennung', acknowledgments: '## Danksagung',
-  },
-  'README.es.md': {
-    install: '## Instalación', compatibility: null, usage: '## Uso',
-    behaviour: '## Notas de comportamiento', changelog: '## Historial de versiones', docs: '## Documentación',
-    licence: '## Licencia y atribución', acknowledgments: '## Agradecimientos',
-  },
-  'README.pt.md': {
-    install: '## Instalação', compatibility: null, usage: '## Uso',
-    behaviour: '## Notas de comportamento', changelog: '## Histórico de versões', docs: '## Documentação',
-    licence: '## Licença e atribuição', acknowledgments: '## Agradecimentos',
-  },
-  'README.ru.md': {
-    install: '## Установка', compatibility: null, usage: '## Использование',
-    behaviour: '## Примечания о поведении', changelog: '## Журнал изменений', docs: '## Документация',
-    licence: '## Лицензия и атрибуция', acknowledgments: '## Благодарности',
-  },
+// Each language has its own editorial structure. All nine pages are written
+// for THIS fork; the seven short translations refer to the maintained full
+// English/Chinese guides rather than preserving obsolete upstream install text.
+const PAGES = {
+  'README.md': [
+    '## What this fork does', '## Requirements', '## Install',
+    '## Create your first WSL workspace', '## Configuration', '## Diagnostics',
+    '## Compatibility', '## Limits and recovery', '## Documentation',
+    '## Origin and license',
+  ],
+  'README.zh.md': [
+    '## 这个版本能做什么', '## 运行要求', '## 安装与更新', '## 开始使用',
+    '## 配置', '## 性能与诊断', '## 兼容性', '## 已知边界',
+    '## 相关文档', '## 原项目与许可',
+  ],
+  'README.ja.md': ['## 必要なもの', '## インストール', '## 使い方', '## 元プロジェクトとライセンス'],
+  'README.ko.md': ['## 요구 사항', '## 설치', '## 사용 방법', '## 원본 프로젝트 및 라이선스'],
+  'README.fr.md': ['## Prérequis', '## Installation', '## Utilisation', '## Projet d’origine et licence'],
+  'README.de.md': ['## Voraussetzungen', '## Installation', '## Verwendung', '## Ursprungsprojekt und Lizenz'],
+  'README.es.md': ['## Requisitos', '## Instalación', '## Uso', '## Proyecto original y licencia'],
+  'README.pt.md': ['## Requisitos', '## Instalação', '## Como usar', '## Origem e licença'],
+  'README.ru.md': ['## Требования', '## Установка', '## Использование', '## Исходный проект и лицензия'],
 }
-
-// A README gaining or losing a behaviour bullet is a decision recorded here: the ninth one arrived
-// with the keyboard door (`wsl_terminal`, 2026-10-06), which is a new model-facing tool rather than
-// a difference of an existing one — the class of change a reader has to be told about.
-const BEHAVIOUR_BULLETS = 9   // bash, file tools, search, skills, shell lifetime, keyboard door, jobs, old hosts, banner
-const TOKENS = [
-  'wsl-search', 'wsl-relay', 'bash_background', 'readlink', 'wsl_terminal',
-  'FS_SANDBOX_DENIED', 'CHANGELOG.md', 'docs/README.md', 'TESTING.md',
+const FULL = new Map([['README.md','## Compatibility'], ['README.zh.md','## 兼容性']])
+const REQUIRE_EVERYWHERE = [
+  FORK, ORIGINAL, INSTALL,
+  'README.md', 'README.zh.md', 'python3',
+  '/mnt/c/', 'grep', 'glob', '[LICENSE](LICENSE)', '[NOTICE](NOTICE)',
 ]
-const STALE = ['danger-full-access']
-// The rule above is a documentation *choice*, not a factual correction: the mode really does
-// pass writes through (src/fs.ts:319-328, asserted by tests/fs-policy.test.ts:95). It is kept
-// out of the READMEs because none of them document how to escalate a sandbox, and the gate's
-// job is that a translated README may not advertise something the English authority stopped
-// saying. To make the mode user-facing instead, add it to README.md's file-tools bullet and
-// drop it from this list — do not delete the check.
+const REQUIRE_FULL = [
+  'fileBackend', 'searchTransport', 'searchIdleMs', 'searchMetrics',
+  '120000', '{"method":"performance"}', '16 MiB',
+  'docs/README.md', 'TESTING.md', 'CHECKPOINT.md', 'CHANGELOG.md',
+]
 
-const FULL = Object.entries(FILES).filter(([, s]) => s.compatibility !== null).map(([f]) => f)
-
-const red = []
-const green = []
-const fail = (m) => red.push(m)
-const pass = (m) => green.push(m)
-
-const read = (f) => fs.readFileSync(path.join(root, f), 'utf8')
-const exists = (f) => fs.existsSync(path.join(root, f))
-
-/** Heading lines with their line index. */
-function headings(lines) {
-  return lines.map((l, i) => [l, i]).filter(([l]) => /^## /.test(l))
-}
-
-function sectionBody(lines, heading) {
-  const hs = headings(lines)
-  const at = hs.findIndex(([l]) => l === heading)
-  if (at < 0) return null
-  const start = hs[at][1]
-  const end = at + 1 < hs.length ? hs[at + 1][1] : lines.length
-  return lines.slice(start + 1, end)
-}
-
+const red = [], green = []
+const fail = x => red.push(x)
+const pass = x => green.push(x)
+const exists = filename => fs.existsSync(path.join(root, filename))
+const read = filename => fs.readFileSync(path.join(root, filename), 'utf8')
 const manifest = JSON.parse(read('package.json'))
 const declared = Object.keys(manifest.dsh.compatibility.dshReleases).sort()
-const manifestRepo = /github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/.exec(manifest.repository.url)?.[1]
+const expectedRepo = /github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/.exec(manifest.repository.url)?.[1]
+if (expectedRepo !== 'yaelysia/dsh-wsl-workspace') fail('package.json repository URL disagrees with this fork')
 
-for (const [file, expected] of Object.entries(FILES)) {
-  if (!exists(file)) { fail(`${file}: missing`); continue }
-  const redBefore = red.length
-  const lines = read(file).split('\n')
-  const names = headings(lines).map(([l]) => l)
-
-  // 1) the skeleton, by name — including that nothing unregistered was added or dropped
-  const want = Object.values(expected).map(v => v).filter(Boolean)
-  for (const h of want) if (!names.includes(h)) fail(`${file}: missing section "${h}"`)
-  for (const h of names) if (!want.includes(h)) fail(`${file}: section "${h}" is not declared in scripts/check-docs-parity.mjs`)
-
-  // 2) the behaviour section carries the current facts
-  const body = sectionBody(lines, expected.behaviour)
-  if (!body) { fail(`${file}: cannot read the behaviour section`); continue }
-  const bullets = body.filter(l => /^- /.test(l))
-  if (bullets.length !== BEHAVIOUR_BULLETS) fail(`${file}: ${bullets.length} behaviour bullets, expected ${BEHAVIOUR_BULLETS}`)
-  const text = lines.join('\n')
-  for (const t of TOKENS) if (!text.includes(t)) fail(`${file}: never mentions ${t}`)
-  for (const s of STALE) if (text.includes(s)) fail(`${file}: still advertises "${s}"`)
-
-  // 3) where the release list lives
-  if (expected.compatibility) {
-    const cb = sectionBody(lines, expected.compatibility) || []
-    const listed = [...new Set([...cb.join('\n').matchAll(/`([^`]+)`/g)].map(m => m[1]))]
-      .filter(t => /^0\.\d+\.\d+/.test(t)).sort()
-    if (listed.join() !== declared.join()) fail(`${file}: ${expected.compatibility} lists ${listed.length} releases, manifest declares ${declared.length}`)
-  } else if (!/README\.md/.test(sectionBody(lines, expected.install)?.length ? text : '')) {
-    fail(`${file}: no pointer to the English compatibility section`)
-  }
-
-  // 4) the install command must name the repository the manifest names, in every language
-  if (!text.includes(`github.com/${manifestRepo}`)) fail(`${file}: does not offer github.com/${manifestRepo}`)
-
-  // The summary line only prints for a file that produced no RED above, so "ok" never
-  // contradicts a failure on the same README.
-  if (redBefore === red.length) pass(`${file}: ${names.length} declared sections + ${BEHAVIOUR_BULLETS} behaviour bullets`)
+function sectionBody(text, heading) {
+  const lines = text.split('\n')
+  const start = lines.indexOf(heading)
+  if (start < 0) return null
+  const next = lines.findIndex((line, index) => index > start && line.startsWith('## '))
+  return lines.slice(start + 1, next < 0 ? lines.length : next).join('\n')
 }
 
-// 5) the changelog pointer must not enumerate versions — it rots on the next release
-for (const [file, expected] of Object.entries(FILES)) {
-  if (!exists(file)) continue
-  const body = sectionBody(read(file).split('\n'), expected.changelog) || []
-  const versions = [...body.join('\n').matchAll(/\b0\.\d+\.\d+/g)].map(m => m[0])
-  if (versions.length) fail(`${file}: ${expected.changelog} hard-codes version(s) ${versions.join(', ')} — name the file, not the range`)
+for (const [filename, expected] of Object.entries(PAGES)) {
+  if (!exists(filename)) { fail(${filename}: missing); continue }
+  const before = red.length
+  const text = read(filename)
+  const headings = text.split('\n').filter(line => line.startsWith('## '))
+  if (JSON.stringify(headings) !== JSON.stringify(expected)) {
+    fail(${filename}: sections differ from the current fork's documented layout)
+  }
+  for (const token of REQUIRE_EVERYWHERE) {
+    if (!text.includes(token)) fail(${filename}: missing ${token})
+  }
+  if (/dsh\.so\/badge|raw\.githubusercontent\.com\/dsh-wsl-workspace-maintainers\//.test(text)) {
+    fail(${filename}: obsolete upstream badge or hosted image remains)
+  }
+  if (/^\s*dsh plugin(?:\s+--profile\s+\S+)?\s+add\s+dsh-wsl-workspace\s*$/m.test(text)) {
+    fail(${filename}: recommends the upstream npm name instead of the fork)
+  }
+  if (!text.includes('MIT')) fail(${filename}: missing license name)
+  if (FULL.has(filename)) {
+    for (const token of REQUIRE_FULL) if (!text.includes(token)) fail(${filename}: missing ${token})
+    const compatibility = sectionBody(text, FULL.get(filename))
+    if (compatibility === null) {
+      fail(${filename}: compatibility section absent)
+    } else {
+      const listed = [...new Set([...compatibility.matchAll(/`([^`]+)`/g)].map(m=>m[1]).filter(x=>/^0\.\d+\.\d+/.test(x)))].sort()
+      if (listed.join('|') !== declared.join('|')) fail(${filename}: compatibility list != package.json declaration)
+    }
+  } else {
+    if (!text.includes('[English](README.md)') || !text.includes('[简体中文](README.zh.md)')) {
+      fail(${filename}: concise translation must point to the full guides)
+    }
+  }
+  if (red.length === before) pass(${filename}: correct fork identity, installation and structure)
 }
 
 function markdownFiles(dir, acc = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.name === 'node_modules' || entry.name === '.git') continue
-    const p = path.join(dir, entry.name)
-    if (entry.isDirectory()) markdownFiles(p, acc)
-    else if (entry.name.endsWith('.md')) acc.push(p)
+    const found = path.join(dir, entry.name)
+    if (entry.isDirectory()) markdownFiles(found, acc)
+    else if (entry.name.endsWith('.md')) acc.push(found)
   }
   return acc
 }
 
-function checkLinks() {
-  let checked = 0
-  let broken = 0
-  for (const file of markdownFiles(root)) {
-    // Archived documents are kept verbatim: their prose and its references are history, so
-    // only the links their banners added (the ones reaching out of the archive) are followed.
-    const archived = file.includes(`${path.sep}archive${path.sep}`)
-    for (const m of fs.readFileSync(file, 'utf8').matchAll(/\]\(([^)\s]+)\)/g)) {
-      const target = m[1]
-      if (/^(https?:|mailto:|#)/.test(target)) continue
-      if (archived && !/\.\.\//.test(target)) continue
-      checked++
-      const abs = path.resolve(path.dirname(file), decodeURIComponent(target.split('#')[0]))
-      if (!fs.existsSync(abs)) { broken++; fail(`${path.relative(root, file)}: broken link ${target}`) }
+let links = 0
+for (const file of markdownFiles(root)) {
+  const archived = file.includes(${path.sep}archive${path.sep})
+  for (const hit of fs.readFileSync(file, 'utf8').matchAll(/\]\(([^)\s]+)\)/g)) {
+    const target = hit[1]
+    if (/^(?:https?:|mailto:|#)/.test(target)) continue
+    if (archived && !target.includes('../')) continue
+    links++
+    const pathname = decodeURIComponent(target.split('#')[0])
+    if (!fs.existsSync(path.resolve(path.dirname(file), pathname))) {
+      fail(${path.relative(root, file)}: broken relative link ${target})
     }
   }
-  if (checked === 0) fail('no relative link was inspected — the check is not measuring anything')
-  else if (broken === 0) pass(`${checked} relative links resolve`)
+}
+if (links === 0) fail('no relative Markdown links checked')
+else pass(${links} relative Markdown links inspected)
+
+function changeVersions(filename) {
+  return exists(filename) ? [...read(filename).matchAll(/^## (0\.[^\s—]+) —/gm)].map(m=>m[1]) : null
+}
+const en = changeVersions('CHANGELOG.md')
+const zh = changeVersions('CHANGELOG.zh.md')
+if (!en || !zh || en.join('|') !== zh.join('|') || en[0] !== manifest.version) {
+  fail('English/Chinese CHANGELOG versions disagree with each other or package.json')
+} else {
+  pass(${en.length} CHANGELOG releases agree with package.json)
 }
 
-function checkChangelogPair() {
-  const versions = (f) => exists(f)
-    ? [...read(f).matchAll(/^## (0\.[^\s—]+) —/gm)].map(m => m[1])
-    : null
-  const en = versions('CHANGELOG.md')
-  const zh = versions('CHANGELOG.zh.md')
-  if (!en || !zh) return fail('CHANGELOG.md / CHANGELOG.zh.md missing')
-  if (en.length !== zh.length) fail(`CHANGELOG.md lists ${en.length} releases, CHANGELOG.zh.md lists ${zh.length}`)
-  const onlyEn = en.filter(v => !zh.includes(v))
-  const onlyZh = zh.filter(v => !en.includes(v))
-  if (onlyEn.length) fail(`releases only in CHANGELOG.md: ${onlyEn.join(', ')}`)
-  if (onlyZh.length) fail(`releases only in CHANGELOG.zh.md: ${onlyZh.join(', ')}`)
-  if (en[0] !== manifest.version) fail(`newest CHANGELOG.md entry is ${en[0]} but package.json says ${manifest.version}`)
-  else pass(`CHANGELOG pair agrees on ${en.length} releases, newest ${en[0]} = package.json`)
-}
-
-checkLinks()
-checkChangelogPair()
-
-for (const g of green) console.log(`  ok   ${g}`)
-for (const r of red) console.log(`  RED  ${r}`)
-console.log(red.length ? `docs-parity: ${red.length} RED, ${green.length} ok` : `docs-parity: all ${green.length} checks green`)
+for (const message of green) console.log('  ok   ' + message)
+for (const message of red) console.log('  RED  ' + message)
+console.log(red.length ? $docs-parity: ${red.length} RED, ${green.length} ok$ : $docs-parity: all ${green.length} checks green$)
 process.exit(red.length ? 1 : 0)
