@@ -73,7 +73,7 @@ import type { SpillRef } from '@deepseek-ai/dsh-spill'
 import { isAbsoluteLinuxPath, parseWslUnc, windowsToMntPath } from '../shared/paths.ts'
 import { decodeWslOutput, defaultDistroSync } from '../shared/wsl.ts'
 import { getWorkspaceUsername } from '../shared/wsl-credentials.ts'
-import { basenameFilters, compileGlob, expandBraces } from '../shared/search-patterns.ts'
+import { basenameFilters, compileGlob, expandBraces, globDirectoryPrefix } from '../shared/search-patterns.ts'
 import { GREP_SCRIPT, GLOB_SCRIPT } from '../shared/search-scripts.ts'
 import { WslRpcPool, RpcTransportError, type RpcRun as WslRun } from '../shared/rpc-transport.ts'
 import { resolveRpcConfig, RPC_DEFAULTS } from '../shared/rpc-config.ts'
@@ -981,7 +981,9 @@ function registerGlob(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
       if (target === undefined) {
         throw new SearchError('glob is only available in a WSL workspace session', 'SEARCH_FAILED')
       }
-      const values = [linuxTarget(input.path), String(config.rawOutputMaxBytes + 1), ...basenameFilters([input.pattern])]
+      const prefix = globDirectoryPrefix(input.pattern)
+      const values = [linuxTarget(input.path), String(config.rawOutputMaxBytes + 1),
+        ...(prefix === undefined ? [] : ['', prefix]), ...basenameFilters([input.pattern])]
       const run = await executeSearch(target, 'glob', values, exec.signal)
       const stdout = acceptRun(run, 'glob', config.rawOutputMaxBytes)
       const listing = parseGlobRecords(stdout)

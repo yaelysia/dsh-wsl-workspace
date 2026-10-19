@@ -65,8 +65,8 @@ def canonical(path, missing=True):
             done.append(part)
     return '/' + '/'.join(done)
 
-def probe(path, follow=True):
-    try: return os.stat(path, follow_symlinks=follow)
+def probe(path, follow=True, dir_fd=None):
+    try: return os.stat(path, dir_fd=dir_fd, follow_symlinks=follow)
     except (FileNotFoundError, NotADirectoryError): return None
 
 def within(path, root):
@@ -290,15 +290,28 @@ def run(op, req):
         if s is None: fail('FS_NOT_FOUND', 'directory not found')
         if not stat.S_ISDIR(s.st_mode): fail('FS_NOT_DIRECTORY', 'not a directory')
         result = []
-        with os.scandir(path) as entries:
-            for entry in entries:
-                resolved = canonical(entry.path)
-                s = probe(resolved)
-                row = {'name': entry.name, 'path': resolved, 'type': 'other'}
-                if s is not None: row.update(info(s))
-                result.append(row)
-                if len(result) > 100000: fail('FS_TOO_LARGE', 'directory exceeds 100000 entries')
-        return result
+        directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            opened = os.fstat(directory)
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    resolved = os.path.join(path, entry.name)
+                    # Fresh descriptor-relative metadata; common ancestors are not walked N times.
+                    s = probe(entry.name, False, directory)
+                    if s is not None and stat.S_ISLNK(s.st_mode):
+                        resolved = canonical(resolved)
+                        s = probe(resolved)
+                    row = {'name': entry.name, 'path': resolved, 'type': 'other'}
+                    if s is not None: row.update(info(s))
+                    result.append(row)
+                    if len(result) > 100000: fail('FS_TOO_LARGE', 'directory exceeds 100000 entries')
+            current = probe(path, False)
+            if (current is None or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+                    or canonical(path) != path):
+                fail('FS_STALE_VERSION', 'directory changed during enumeration')
+            return result
+        finally:
+            os.close(directory)
     if op == 'fs.write': return atomic(path, req)
     if op == 'fs.edit': return atomic(path, req, True)
     fail('FS_IO_ERROR', 'unknown file operation')

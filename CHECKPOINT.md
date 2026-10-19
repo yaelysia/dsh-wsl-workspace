@@ -1,5 +1,9 @@
 # Windows DSH → WSL continuation checkpoint
 
+## CP14: traversal reduction in progress
+
+Branch `perf/cp14-prune-enumeration`, baseline CP13 `f7c051a05c279bec181a2ef0257d6b4240fc9ad4`. Read [CP14](docs/performance-cp14.md). This pass prunes fixed-prefix glob traversal and enumerates native directory entries relative to an open directory, with fresh entry metadata and parent identity checks. Do not infer speedup from tests or substitute old Desktop acceptance. Keep matching src/lib and exact before/after measurements. No protocol, mutation, Skill or host changes.
+
 ## CP13: validated native I/O allocation/performance pass
 
 Active branch: `perf/cp13-native-io`; [PR #10](https://github.com/yaelysia/dsh-wsl-workspace/pull/10), currently stacked on CP12 [PR #9](https://github.com/yaelysia/dsh-wsl-workspace/pull/9). A branch or green check does not establish a main merge or a new Desktop acceptance. Check live refs before continuing.

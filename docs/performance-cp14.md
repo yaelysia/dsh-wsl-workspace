@@ -24,3 +24,16 @@ The preparation transform verifies the exact Git blob identity and unique source
 No protocol redesign, persistent file handles across requests, file-content caching, cross-owner pool, new dependency, user-facing setting, Skill/watch/PTC work, or DSH installer/hot-reload change. Earlier Desktop acceptance is historical, not evidence for this candidate.
 
 No performance results are claimed by this preparation checkpoint.
+
+## First completed Linux measurements
+
+20 alternating samples per backend after warm-up; milliseconds. Full raw readings are in [Linux JSON](performance-cp14-linux.json). These are native Linux, not Windows or Desktop timings.
+
+| Operation | CP13 P50 / P95 | CP14 P50 / P95 |
+|---|---:|---:|
+| list-small-24 | 0.931 / 1.182 | 0.687 / 0.921 |
+| list-deep-2000 | 91.176 / 94.883 | 13.824 / 15.226 |
+| glob-fixed-prefix | 69.404 / 75.895 | 6.23 / 9.636 |
+| glob-leading-wildcard-control | 72.792 / 155.004 | 73.804 / 201.353 |
+
+Real metadata calls: `{"before":{"entries":2000,"lstat":28013,"stat":2001,"fstat":0},"after":{"entries":2000,"lstat":26,"stat":2002,"fstat":1}}`.
