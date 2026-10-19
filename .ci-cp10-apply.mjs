@@ -15,9 +15,8 @@ manifest.scripts['test:rpc-loader'] = 'node --experimental-strip-types --test te
 manifest.scripts['test:rpc-loader-host'] = 'node scripts/run-rpc-loader-host.mjs .host-current 0.2.1-rc.2'
 manifest.scripts['test:node'] += ' && npm run test:rpc-loader'
 writeFileSync('package.json', JSON.stringify(manifest, null, 2) + '\n')
-const workflow = '.github/workflows/native-files.yml'
-const previous = readFileSync(workflow, 'utf8')
-const line = '          npm run test:rpc-mixed 2>&1 | tee logs/mixed-$plane.log'
-assert.equal(previous.split(line).length, 3, 'both native source/lib loops must be present')
-writeFileSync(workflow, previous.replaceAll(line, line + '\n          npm run test:rpc-loader 2>&1 | tee logs/loader-$plane.log'))
+// Workflow registration is already committed through the GitHub connector.
+// GITHUB_TOKEN may publish the tested source/build but cannot alter workflows.
+const workflow = readFileSync('.github/workflows/native-files.yml', 'utf8')
+assert.equal(workflow.split('npm run test:rpc-loader 2>&1 | tee logs/loader-$plane.log').length, 3)
 console.log('Applied only the default-export metadata repair and regression entrypoints; no RPC/FS algorithm changed.')
