@@ -1,0 +1,85 @@
+name: native-rpc-performance
+on:
+  pull_request:
+    paths:
+      - src/shared/native-file-worker.ts
+      - src/shared/rpc-worker.ts
+      - src/shared/rpc-transport.ts
+      - scripts/benchmark-native-rpc.mjs
+      - .github/workflows/native-rpc-performance.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-rpc-performance-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  paired:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      DSH_WSL_TEST_PLANE: src
+      WSL_COMPAT_DISTRO: Ubuntu-24.04
+      MSYS_NO_PATHCONV: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: node ci/install-pinned.mjs
+      - uses: Vampire/setup-wsl@v3
+        if: runner.os == 'Windows'
+        with:
+          distribution: Ubuntu-24.04
+          set-as-default: 'true'
+          additional-packages: python3
+      - name: Record and require actual WSL2
+        if: runner.os == 'Windows'
+        timeout-minutes: 3
+        run: |
+          mkdir -p logs
+          current=$(wsl.exe -l -v 2>/dev/null | tr -d '\0\r' | sed 's/[[:space:]]*$//' | grep -F "$WSL_COMPAT_DISTRO" | grep -oE '[12]$' || true)
+          if [ "$current" != 2 ]; then wsl.exe --set-version "$WSL_COMPAT_DISTRO" 2; fi
+          wsl.exe -l -v 2>/dev/null | tr -d '\0\r' | sed 's/[[:space:]]*$//' | tee logs/distributions.txt
+          grep -F "$WSL_COMPAT_DISTRO" logs/distributions.txt | grep -E '[[:space:]]2$'
+          wsl.exe -d "$WSL_COMPAT_DISTRO" -e uname -r | tee logs/kernel.txt
+      - name: Compare real native providers against CP12
+        run: |
+          mkdir -p logs
+          git worktree add --detach .cp13-baseline 30b9abf7496d818c1f43a69ee50745e924e8a37a
+          node -e "require('node:fs').symlinkSync(require('node:path').resolve('node_modules'), '.cp13-baseline/node_modules', process.platform === 'win32' ? 'junction' : 'dir')"
+          npm run bench:native-rpc -- --baseline .cp13-baseline --iterations 24 --output logs/performance.json > logs/benchmark.log 2>&1
+      - name: Measured summary (not a latency gate)
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs'
+          const r = JSON.parse(readFileSync('logs/performance.json'))
+          const compact = x => ({ p50Ms: x.p50Ms, p95Ms: x.p95Ms, samples: x.samples })
+          const summary = { platform: r.platform, node: r.node, baselineSha: r.baselineSha, iterations: r.iterations, scope: r.scope,
+            rows: r.rows.map(x => ({ bytes: x.bytes, operation: x.operation, before: compact(x.before), after: compact(x.after) })),
+            decoding: r.decoding.map(x => ({ bytes: x.bytes, before: compact(x.before), after: compact(x.after) })),
+            bootstrap20Calls: { before: compact(r.bootstrap20Calls.before), after: compact(r.bootstrap20Calls.after) },
+            newlineSamplingOnly: r.newlineSamplingOnly,
+            pools: Object.fromEntries(Object.entries(r.pools).map(([name,x]) => [name, { workers: x.workers, launches: x.launches, pending: x.pending, fallbacks: x.fallbacks }])) }
+          const text = JSON.stringify(summary, null, 2) + '\n'
+          writeFileSync('logs/summary.json', text)
+          console.log(text)
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-rpc-performance-${{ matrix.os }}
+          path: logs/
+          if-no-files-found: error
+          retention-days: 14
