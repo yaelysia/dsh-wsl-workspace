@@ -1,0 +1,79 @@
+name: traversal-performance
+on:
+  pull_request:
+    paths: ['src/**', 'lib/**', 'package.json', 'tests/traversal-performance.test.mjs', 'scripts/benchmark-traversal.mjs', '.github/workflows/traversal-performance.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  traversal:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            wsl: 0
+          - os: windows-latest
+            wsl: 1
+          - os: windows-latest
+            wsl: 2
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      WSL_COMPAT_DISTRO: Ubuntu-24.04
+      MSYS_NO_PATHCONV: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: node ci/install-pinned.mjs
+      - uses: Vampire/setup-wsl@v3
+        if: matrix.wsl != 0
+        with:
+          distribution: Ubuntu-24.04
+          additional-packages: python3
+      - name: Require the requested WSL version
+        if: matrix.wsl != 0
+        timeout-minutes: 5
+        env:
+          WANT: ${{ matrix.wsl }}
+        run: |
+          mkdir -p logs
+          current=$(wsl.exe -l -v | tr -d '\0\r' | sed 's/[[:space:]]*$//' | grep -F "$WSL_COMPAT_DISTRO" | grep -oE '[12]$' || true)
+          if [ "$current" != "$WANT" ]; then wsl.exe --set-version "$WSL_COMPAT_DISTRO" "$WANT"; fi
+          wsl.exe -l -v | tr -d '\0\r' | sed 's/[[:space:]]*$//' | tee logs/wsl.txt
+          grep -F "$WSL_COMPAT_DISTRO" logs/wsl.txt | grep -E "[[:space:]]${WANT}$"
+          wsl.exe -d "$WSL_COMPAT_DISTRO" -e uname -r | tee logs/kernel.txt
+      - name: Same source and shipped-library traversal contracts
+        run: |
+          mkdir -p logs
+          npm run test:traversal 2>&1 | tee logs/traversal-src.log
+          DSH_WSL_TEST_PLANE=lib npm run test:traversal 2>&1 | tee logs/traversal-lib.log
+      - name: Alternating actual tools and providers against CP13
+        if: matrix.wsl != 1
+        run: |
+          git worktree add --detach .cp14-baseline f7c051a05c279bec181a2ef0257d6b4240fc9ad4
+          node -e "require('node:fs').symlinkSync(require('node:path').resolve('node_modules'), '.cp14-baseline/node_modules', process.platform === 'win32' ? 'junction' : 'dir')"
+          DSH_WSL_TEST_PLANE=src npm run bench:traversal -- --baseline .cp14-baseline --iterations 24 --output logs/performance.json > logs/benchmark.log 2>&1
+          node --input-type=module <<'NODE'
+          import {readFileSync,writeFileSync} from 'node:fs'
+          const r=JSON.parse(readFileSync('logs/performance.json'))
+          const compact=x=>({samples:x.samples,p50Ms:x.p50Ms,p95Ms:x.p95Ms})
+          const summary={...r,rows:r.rows.map(x=>({...x,before:compact(x.before),after:compact(x.after)}))}
+          const text=JSON.stringify(summary,null,2)+'\n'
+          writeFileSync('logs/summary.json',text);console.log(text)
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: traversal-${{ matrix.os }}-wsl${{ matrix.wsl }}
+          path: logs/
+          retention-days: 14
