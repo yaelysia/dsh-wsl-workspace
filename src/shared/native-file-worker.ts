@@ -131,7 +131,7 @@ def read_bytes(path, cap, offset=None, expected=None):
         if len(data) > cap: fail('FS_TOO_LARGE', 'file grew beyond the byte limit')
         if info(before)['version'] != info(os.fstat(fd))['version']:
             fail('FS_STALE_VERSION', 'file changed during read')
-        return bytes(data)
+        return data  # Consumers accept the buffer; avoid a second full-file allocation.
     finally: os.close(fd)
 
 def text(raw, all_binary=False):
@@ -184,7 +184,7 @@ def atomic(path, req, editing=False):
             if count == 0: fail('FS_EDIT_NOT_FOUND', 'old_string was not found')
             if count > 1 and not req['replaceAll']: fail('FS_AMBIGUOUS_EDIT', 'old_string matched more than once')
             after = before.replace(old, new)
-            sample = original.encode('utf-16-le', 'surrogatepass')[:8192].decode('utf-16-le', 'surrogatepass')
+            sample = original[:4096].encode('utf-16-le', 'surrogatepass')[:8192].decode('utf-16-le', 'surrogatepass')
             crlf = sample.count('\r\n') > sample.count('\n') - sample.count('\r\n')
             data = (normalized(after).replace('\n', '\r\n') if crlf else after).encode('utf-8')
         else:
