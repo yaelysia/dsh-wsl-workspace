@@ -417,3 +417,35 @@ test('pool disposal reaps warm native executors, including idle interpreters', a
     }
   } finally { pool.dispose(); await runBash('rm -rf -- "$1"', [root], distro) }
 })
+
+test('shared byte decoder keeps canonical base64 and inclusive byte limits', async () => {
+  const { decodeRpcBytes } = await import('../src/shared/rpc-transport.ts')
+  for (const bytes of [Buffer.alloc(0), Buffer.from([0, 255, 1]), Buffer.from('中文\r\n'), Buffer.alloc(256, 123)]) {
+    const encoded = bytes.toString('base64')
+    assert.deepEqual(decodeRpcBytes(encoded, bytes.length), bytes)
+    if (bytes.length) assert.throws(() => decodeRpcBytes(encoded, bytes.length - 1), /invalid or oversized base64/)
+  }
+  for (const raw of [null, undefined, 12, {}, []]) assert.throws(() => decodeRpcBytes(raw, 64), /invalid byte payload/)
+  for (const raw of ['Zg', 'Zg=', 'Zh==', 'Zg===', 'Zg== ', 'Zg==\n', '***', '_w==']) {
+    assert.throws(() => decodeRpcBytes(raw, 64), /invalid or oversized base64/, JSON.stringify(raw))
+  }
+})
+
+test('native body validation retains filesystem errors when reusing the RPC decoder', async () => {
+  const { NativeFileClient } = await import('../src/shared/native-files.ts')
+  const { RpcMetrics } = await import('../src/shared/rpc-metrics.ts')
+  let data = ''
+  const client = new NativeFileClient({
+    metrics: new RpcMetrics(),
+    async run() { return { code: 0, aborted: false, signal: null, stderr: Buffer.alloc(0),
+      stdout: Buffer.from(JSON.stringify({ ok: true, committed: false, value: { data } })) } },
+  })
+  for (data of [null, 12, 'Zg', 'Zh==', 'Zg== ', 'Zm9v']) {
+    await assert.rejects(client.read(target('/'), '/file', 1),
+      error => error.code === 'FS_IO_ERROR' && error.message === 'invalid native file response')
+  }
+  data = 'Zg=='
+  assert.deepEqual(await client.read(target('/'), '/file', 1), Buffer.from('f'))
+  data = ''
+  assert.deepEqual(await client.read(target('/'), '/file', 0), Buffer.alloc(0))
+})

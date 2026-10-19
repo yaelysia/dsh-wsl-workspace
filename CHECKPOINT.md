@@ -1,5 +1,17 @@
 # Windows DSH → WSL continuation checkpoint
 
+## CP12: behaviour-preserving code simplification (2026-10-19)
+
+Base: main `22c3349874e4968f0ca751f3aaa873d43adacd42` after the README rewrite and accepted shared-pool UAT. Branch: `refactor/simplify-rpc-files`.
+
+The simplification has four concrete targets: share process-result types and outcome accounting; reuse one strict base64 decoder while preserving the native filesystem error boundary; converge broken/disposed worker cleanup on one idempotent close path; use the existing identity-aware worldPath resolver instead of a second processPath decoder. Glob display projection uses map rather than a push loop. No new runtime dependency, worker, cache, API mode or generic framework is added.
+
+Do not change Loader default metadata, pool owner/identity/configuration keys, write authorization, versions, atomic publication, cancellation acknowledgement or unknown-mutation handling. No Skill, watch, PTC or host hot-reload changes belong to this round. The user accepts a full host restart for updates and leaves host hot-reload work to DSH upstream.
+
+Delivery must include source, matching lib, byte-for-byte repeat-build verification and existing source/lib native-file, RPC-owner, Loader, mixed and busy-lifetime checks. Added tests pin outcome precedence and canonical byte decoding, including filesystem-specific error messages. A CI job being started is not a pass; read its final result and the published branch SHA. Temporary delivery machinery must be removed before merge.
+
+User tests at CP11 remain the accepted earlier build's evidence, not new Desktop validation of this refactor. Start with this checkpoint and the exact branch head, not an old phase branch. Historical CP10/CP11 material below remains unchanged.
+
 ## CP11: user-confirmed shared RPC pool acceptance after PR #7 merge (2026-10-19)
 
 - [PR #7](https://github.com/yaelysia/dsh-wsl-workspace/pull/7) was merged into `main` at `addd1c07ff87c6c84782879abb4019d01cd0818d`, preserving the Loader default-export correction and matching `lib/`.

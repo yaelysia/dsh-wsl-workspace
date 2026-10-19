@@ -575,14 +575,7 @@ export class WslFileSystem extends LocalFileSystem {
   }
 
   override processPath(target: FsTarget): string {
-    const key = String(target.targetKey)
-    const native = nativeCoordinate(key)
-    if (native) return native.path
-    const unc = parseWslUnc(key)
-    if (unc !== null) return unc.linuxPath
-    const mnt = windowsToMntPath(key)
-    if (mnt !== null) return mnt
-    throw new FsError(`wsl-fs: target "${target.displayPath}" is outside the WSL execution world`, 'FS_IO_ERROR')
+    return this.worldPath(target).linuxPath
   }
 
   override fileUrl(target: FsTarget): string {

@@ -51,3 +51,23 @@ test('diagnostic registration is explicitly owned, anonymous and disposable', ()
   dispose(); dispose()
   assert.equal(rpcDiagnostics().providers.length,count)
 })
+
+// Explicit cases pin precedence, the exact byte boundary and grep's special exit code.
+test('shared outcome classification preserves cancellation, byte limits and command status', async () => {
+  const { rpcRunOutcome, RPC_METHODS } = await import('../src/shared/rpc-metrics.ts')
+  const cases = [
+    { aborted: true, code: 0, length: 17, normal: 'aborted', grep: 'aborted' },
+    { aborted: true, code: 2, length: 0, normal: 'aborted', grep: 'aborted' },
+    { aborted: false, code: 0, length: 17, normal: 'overflow', grep: 'overflow' },
+    { aborted: false, code: 2, length: 17, normal: 'overflow', grep: 'overflow' },
+    { aborted: false, code: 0, length: 16, normal: 'ok', grep: 'ok' },
+    { aborted: false, code: 1, length: 0, normal: 'error', grep: 'ok' },
+    { aborted: false, code: 2, length: 0, normal: 'error', grep: 'error' },
+    { aborted: false, code: null, length: 0, normal: 'error', grep: 'error' },
+    { aborted: false, code: -9, length: 0, normal: 'error', grep: 'error' },
+  ]
+  for (const op of RPC_METHODS) for (const item of cases) {
+    assert.equal(rpcRunOutcome({ ...item, stdout: new Uint8Array(item.length) }, op, 16),
+      op === 'grep' ? item.grep : item.normal, op + ':' + JSON.stringify(item))
+  }
+})

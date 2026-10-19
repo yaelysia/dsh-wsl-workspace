@@ -4,6 +4,14 @@ export const RPC_METHODS = ['grep', 'glob', 'fs.metadata', 'fs.resolve', 'fs.sta
 export type RpcMethod = typeof RPC_METHODS[number]
 export type TimingKey = `file.${'resolve' | 'stat' | 'lstat' | 'read' | 'range' | 'list' | 'write' | 'edit'}` | `tool.${'grep' | 'glob'}` | `oneshot.${'grep' | 'glob'}`
   | `rpc.${RpcMethod}.${'total' | 'ready' | 'roundTrip' | 'queue' | 'execute'}`
+/** Shared execution accounting; grep exit 1 means no matches, not a failure. */
+export function rpcRunOutcome(result: { aborted: boolean; code: number | null; stdout: Uint8Array },
+  op: RpcMethod, maxBytes: number): Outcome {
+  if (result.aborted) return 'aborted'
+  if (result.stdout.length > maxBytes) return 'overflow'
+  return result.code === 0 || (op === 'grep' && result.code === 1) ? 'ok' : 'error'
+}
+
 const WINDOW = 256
 interface Bucket { count: number; cursor: number; samples: number[]; outcomes: Record<Outcome, number> }
 export class RpcMetrics {
