@@ -1,6 +1,18 @@
 # Windows DSH → WSL continuation checkpoint
 
-## CP7: resumed known-issue repairs; keep host and plugin outcomes separate
+## CP9: main update failed; installed state must be reconciled
+
+Current continuation basis is **main**, not the old phase or repair branches. PR #6 was merged at `deaec609ef8c8eb8ced1a541e3d684f310c6da1f`; its tree matches the verified CP7 head. [CP8 merge/UAT handoff](https://github.com/yaelysia/dsh-wsl-workspace/pull/6#issuecomment-6257194042).
+
+The user now reports a failed update: Windows path-case aliases duplicating app-boot state, Git URL/shorthand source mismatch, and rollback leaving changed node_modules. **Do not record this as a successful new installation or proceed with R1-R4 on an unverified mixed state.** The previous accepted Desktop SHA `767c6818` is historical; neither it nor the requested new SHA establishes which package files currently run after failure.
+
+Read [CP9 source findings, recovery boundary and required regression tests](docs/install-update-failure-cp9.md) first. Source review at upstream `687f282e` confirms raw source-string matching, dependency-diff target identification, two-file-only rollback, a separate activation boundary and incomplete `changed` accounting. The actual Windows case aliases and current installed module graph still require the latest failure evidence; the old `0676ed1f` report does not provide them.
+
+This checkpoint changes documentation only: no plugin runtime/lib change, no host deployment, no user-profile modification and no new runtime test claim. The CP7 host-root candidate remains test-only. Do not keep recommending uninstall/reinstall through the same broken host transaction, silently edit installed host files, or implement unrelated WSL capabilities to compensate. Host update/rollback and module-identity repairs belong at the host source/integration boundary.
+
+## CP7 historical checkpoint: resumed known-issue repairs
+
+The following is the retained CP7 record before the CP8 merge. Its branch/merge/install status is superseded by CP8 and CP9 above; its implementation and exact validation scope remain historical evidence.
 
 Active work: `fix/uat-known-issues`, [PR #6](https://github.com/yaelysia/dsh-wsl-workspace/pull/6), based on main `a4e650470c9f78a17fd848f960afa2ee4c70be93`. Do not restart the four completed implementation stages. The user's accepted installed build remains `767c68188c9a767bbcabeaf735a6aa598d7f39e8`; this branch has not been deployed to their Desktop or merged into main.
 
@@ -63,5 +75,7 @@ Do not automatically replay a dispatched mutation, rewrite it through UNC after 
 | CP5 main merge | `10e22b906fa5ff3436c47b22520741a5526c9822` | PR #1/#3/#4/#5 merged with history preserved |
 | CP6 actual installation | `767c68188c9a767bbcabeaf735a6aa598d7f39e8` | Main installed without a local patch; minimum tools/restart passed |
 | CP7 resumed repairs | `f3888f84616e8b42fee20ea0c76d844ad7e54514` | Owner dependency, lifecycle regressions, help and matching build |
+| CP8 main merge | `deaec609ef8c8eb8ced1a541e3d684f310c6da1f` | PR #6 merged; subsequent Desktop update reported failed |
+| CP9 failed-update review | `00b78dab4aab84e95a2390895f9fbdb332387abf` | Host identity/rollback findings and recovery/test boundary; documentation only |
 
 Raw user profiles, workstation paths and conversation logs remain private and are not committed. Use `git log -1 -- CHECKPOINT.md` to identify this continuation record.
