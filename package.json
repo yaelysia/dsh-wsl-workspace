@@ -52,7 +52,9 @@
     "test:rpc-busy": "node --experimental-strip-types --test tests/rpc-busy-idle.test.mjs",
     "test:rpc-loader": "node --experimental-strip-types --test tests/rpc-loader-entry.test.mjs",
     "test:rpc-loader-host": "node scripts/run-rpc-loader-host.mjs .host-current 0.2.1-rc.2",
-    "bench:native-rpc": "node --experimental-strip-types scripts/benchmark-native-rpc.mjs"
+    "bench:native-rpc": "node --experimental-strip-types scripts/benchmark-native-rpc.mjs",
+    "test:traversal": "node --experimental-strip-types --test tests/traversal-performance.test.mjs",
+    "bench:traversal": "node --experimental-strip-types scripts/benchmark-traversal.mjs"
   },
   "exports": {
     ".": "./lib/index.js",

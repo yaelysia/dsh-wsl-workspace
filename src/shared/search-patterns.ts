@@ -155,3 +155,16 @@ export function basenameFilters(patterns: readonly string[], skipHidden = false)
   }
   return [...names]
 }
+
+/** Literal directory prefix only; complex/negative patterns retain the full-root search. */
+export function globDirectoryPrefix(pattern: string): string | undefined {
+  if (pattern.startsWith('!') || /[\\\0\r\n]/.test(pattern)) return undefined
+  const parts = pattern.split('/')
+  if (parts.some(part => part === '' || part === '.' || part === '..')) return undefined
+  const prefix: string[] = []
+  for (const part of parts.slice(0, -1)) {
+    if (/[*?\[\]{}]/.test(part)) break
+    prefix.push(part)
+  }
+  return prefix.length ? prefix.join('/') : undefined
+}
