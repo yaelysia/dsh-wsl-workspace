@@ -34,7 +34,6 @@ jobs:
           DSH_WSL_TEST_PLANE=lib npm run test:rpc-loader
           npm run typecheck:gate
           npm run verify:install
-          npm run verify:lib-sync
       - name: Actual Linux paired grep, read-path profile and saved summary
         shell: bash
         run: |
@@ -63,6 +62,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m "build: publish tested CP15 grep/reads artifact"
+          npm run verify:lib-sync
           git push origin HEAD:refs/heads/perf/cp15-grep-read-profiling
       - uses: actions/upload-artifact@v4
         if: always()
