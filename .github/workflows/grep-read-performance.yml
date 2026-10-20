@@ -78,7 +78,12 @@ jobs:
               after:{p50:r.after.p50Ms,p95:r.after.p95Ms},decodedRpcStdoutBytes:r.decodedRpcStdoutBytes,
               matchCount:r.matchCount})),
             reads:profile.scenarios.map(x=>({name:x.scenario,wallP50Ms:x.wall.p50Ms,
-              wallP95Ms:x.wall.p95Ms,ops:Object.fromEntries(Object.entries(x.ops).map(([k,v])=>[k,v.callCounts]))}))}
+              wallP95Ms:x.wall.p95Ms,
+              phases:Object.fromEntries(Object.entries(x.phases).map(([k,v])=>[k,{p50:v.p50Ms,p95:v.p95Ms}])),
+              ops:Object.fromEntries(Object.entries(x.ops).map(([k,v])=>[k,{
+                calls:v.callCounts[0],rpcSumP50Ms:v.summedRpcMs.p50Ms,rpcSumP95Ms:v.summedRpcMs.p95Ms,
+                decodedResponseBytes:v.decodedResponseBytes[0],approxRequestBytes:v.approximateRequestBytes[0]}]))
+            }))}
           writeFileSync('logs/summary.json',JSON.stringify(compact,null,2)+'\n')
           console.log(JSON.stringify(compact,null,2))
           NODE

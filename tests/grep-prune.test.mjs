@@ -128,3 +128,23 @@ for path in ('src/services/deep/needle.ts','src/other/needle.ts','src/components
   assert.ok(diagnostics.metrics.stages['tool.grep']?.count >= 3)
   assert.ok(diagnostics.metrics.stages['file.read']?.count >= 1)
 })
+
+test('target-only pruning lowers candidate bytes before the original output cap', async () => {
+  const root = await fixture(0)
+  try {
+    const created = await runBash(String.raw`set -eu
+root=$1
+mkdir -p "$root/src/unrelated" "$root/src/services"
+for ((i=0;i<120;i++)); do printf 'needle unrelated\n' > "$root/src/unrelated/$i.ts"; done
+printf 'needle target\n' > "$root/src/services/target.ts"
+`, [root])
+    assert.equal(created.code, 0)
+    const hint=basenameFilters(['src/services/**/*.ts'],true)
+    const limited='1024'
+    const broad=await runBash(GREP_SCRIPT,['needle','',root,limited,...hint])
+    const narrowed=await runBash(GREP_SCRIPT,['needle','',root,limited,'','src/services',...hint])
+    assert.equal(broad.stdout.length,1024)
+    assert.ok(narrowed.stdout.length<1024)
+    assert.equal(matching(narrowed,root,'src/services/**/*.ts').length,1)
+  } finally {await runBash('rm -rf -- "$1"',[root])}
+})
