@@ -1,0 +1,72 @@
+name: cp15-delivery
+on:
+  push:
+    branches: [perf/cp15-grep-read-profiling]
+    paths: ['.github/workflows/cp15-delivery.yml']
+permissions:
+  contents: write
+jobs:
+  deliver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: node ci/install-pinned.mjs
+      - name: Build and verify source/library behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+          npm run test:grep-prune
+          DSH_WSL_TEST_PLANE=lib npm run test:grep-prune
+          npm run test:unit
+          npm run test:search-prefilter
+          npm run test:search-transport
+          npm run test:native-files
+          DSH_WSL_TEST_PLANE=lib npm run test:native-files
+          npm run test:rpc-loader
+          DSH_WSL_TEST_PLANE=lib npm run test:rpc-loader
+          npm run typecheck:gate
+          npm run verify:install
+          npm run verify:lib-sync
+      - name: Actual Linux paired grep, read-path profile and saved summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          git worktree add --detach .cp15-baseline 59f70928687480bd46fc5c77c46727f2c9daa2f3
+          node -e "require('node:fs').symlinkSync(require('node:path').resolve('node_modules'), '.cp15-baseline/node_modules', 'dir')"
+          npm run bench:grep-prune -- --baseline .cp15-baseline --iterations 14 --output logs/grep-prune-linux.json > logs/grep.log 2>&1
+          npm run profile:reads -- --iterations 4 --output logs/read-profile-linux.json > logs/read.log 2>&1
+          git worktree remove --force .cp15-baseline
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs'
+          const g=JSON.parse(readFileSync('logs/grep-prune-linux.json'))
+          for(const row of g.rows)console.log(row.scenario,row.before.p50Ms,row.after.p50Ms,row.decodedRpcStdoutBytes)
+          const p=JSON.parse(readFileSync('logs/read-profile-linux.json'))
+          for(const row of p.scenarios)console.log(row.scenario,row.wall.p50Ms,Object.fromEntries(Object.entries(row.ops).map(([k,v])=>[k,v.callCounts])))
+          NODE
+      - name: Publish matching built artifact after validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/heads/perf/cp15-grep-read-profiling | cut -f1)" = "$GITHUB_SHA"
+          git add lib
+          npm run build >/dev/null
+          git diff --exit-code -- lib
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "build: publish tested CP15 grep/reads artifact"
+          git push origin HEAD:refs/heads/perf/cp15-grep-read-profiling
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cp15-delivery-results
+          path: logs/
+          retention-days: 14
