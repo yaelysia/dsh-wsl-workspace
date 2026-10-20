@@ -1,14 +1,17 @@
 /** Fixed Bash scripts: all model-controlled values are argv, never interpolated code. */
 
 /**
- * GNU grep emits path\0line:text records. Optional arguments 5 onward are conservative
- * basename hints for directory searches only; the host remains the exact matcher.
+ * GNU grep emits path\0line:text records. After the first four argv fields,
+ * optional ["", literal-directory-prefix] restricts the Linux walk only when
+ * safe, followed by conservative basename hints. The host remains the exact matcher.
  * Hints retain the original hidden-file rule; explicit file targets stay visible.
  * The cap is enforced in Linux and PIPESTATUS preserves grep's exit status.
  */
 export const GREP_SCRIPT = [
   'set -u',
-  'pattern=$1; include=$2; target=$3; cap=$4',
+  'pattern=$1; include=$2; target=$3; cap=$4; shift 4',
+  'prefix=',
+  'if [ "$#" -ge 2 ] && [ "$1" = "" ]; then prefix=$2; shift 2; fi',
   '[ -n "$target" ] || target=.',
   'if [ -d "$target" ]; then',
   '  target=$(cd -- "$target" && pwd -P)',
@@ -22,8 +25,8 @@ export const GREP_SCRIPT = [
   '  exit 3',
   'fi',
   // Join inside Linux: newline-delimited hints must not cross wsl.exe argv.
-  'if [ "$dir" = 1 ] && [ -z "$include" ] && [ "$#" -gt 4 ]; then',
-  '  printf -v include "%s\\n" "${@:5}"',
+  'if [ "$dir" = 1 ] && [ -z "$include" ] && [ "$#" -gt 0 ]; then',
+  '  printf -v include "%s\\n" "$@"',
   'fi',
   'opts=(-rnIEH -Z)',
   'if [ "$dir" = 1 ]; then',
@@ -33,6 +36,19 @@ export const GREP_SCRIPT = [
   'fi',
   'if [ -n "$include" ]; then',
   '  while IFS= read -r one; do [ -n "$one" ] && opts+=(--include="$one"); done <<<"$include"',
+  'fi',
+  // Do not follow a nested directory symlink by turning it into a command-line
+  // grep root. Keep all originally applied --include/--exclude-dir options.
+  // If the candidate is unavailable/unsafe, run the unchanged full-root walk.
+  'if [ "$dir" = 1 ] && [ -n "$prefix" ]; then',
+  '  candidate=${target%/}; safe=1',
+  '  IFS=/ read -r -a segments <<<"$prefix"',
+  '  for segment in "${segments[@]}"; do',
+  '    case $segment in ""|"."|".."|node_modules|.*) safe=0; break ;; esac',
+  '    candidate=$candidate/$segment',
+  '    if [ -L "$candidate" ] || [ ! -d "$candidate" ]; then safe=0; break; fi',
+  '  done',
+  '  if [ "$safe" = 1 ] && [ "$(cd -- "$candidate" && pwd -P)" = "$candidate" ]; then target=$candidate; fi',
   'fi',
   'grep "${opts[@]}" --regexp="$pattern" -- "$target" | head -c "$cap"',
   'exit "${PIPESTATUS[0]}"',
