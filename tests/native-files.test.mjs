@@ -81,7 +81,7 @@ test('concurrent native read chains coalesce RPCs but keep independent fresh res
   await python(String.raw`import os,sys
 r=sys.argv[1]
 for i in range(8):
-    with open(r+'/cp16-'+str(i)+'.txt','w') as file: file.write('row-'+str(i)+'\\n')
+    with open(r+'/cp16-'+str(i)+'.txt','w') as file: file.write('row-'+str(i)+'\n')
 `, [root])
   const pool = fs.wslRpcPool
   const original = pool.run.bind(pool), observed = []
@@ -93,7 +93,7 @@ for i in range(8):
     const target = await fs.resolve('cp16-'+i+'.txt')
     const info = await fs.stat(target)
     assert.equal(info?.type, 'file')
-    assert.equal(await fs.readText(target), 'row-'+i+'\\n')
+    assert.equal(await fs.readText(target), 'row-'+i+'\n')
   }))
   assert.deepEqual(observed, Array(6).fill('fs.batch'),
     '8 concurrent resolve/stat/read chains should use 1+1+4 native RPCs')
@@ -102,7 +102,7 @@ for i in range(8):
   observed.length = 0
   const target = await fs.resolve('cp16-0.txt')
   assert.equal((await fs.stat(target)).size, 6)
-  assert.equal(await fs.readText(target), 'row-0\\n')
+  assert.equal(await fs.readText(target), 'row-0\n')
   assert.deepEqual(observed, ['fs.resolve', 'fs.stat', 'fs.read'],
     'sequential callers must keep fresh one-operation semantics')
 })
