@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { GLOB_SCRIPT, GREP_SCRIPT } from '../src/shared/search-scripts.ts'
-import { basenameFilters, compileGlob, expandBraces, grepDirectoryPrefix } from '../src/shared/search-patterns.ts'
+import { basenameFilters, commonLiteralDirectory, compileGlob, expandBraces, grepDirectoryPrefix } from '../src/shared/search-patterns.ts'
 import { fixture, runBash } from '../scripts/benchmark-search.mjs'
 import { makeFixture, python } from './support/native-fixture.mjs'
 import { load } from '../scripts/compatibility/plane.mjs'
-import { parseGrepRecords } from '../src/host/wsl-search.ts'
+import { parseGlobRecords, parseGrepRecords } from '../src/host/wsl-search.ts'
 import { posix } from 'node:path'
 
 const cap = String(20_000_000)
@@ -101,10 +101,11 @@ for path in ('src/services/deep/needle.ts','src/other/needle.ts','src/components
   }, { grepMaxMatches: 3000, rawOutputMaxBytes: 20_000_000 })
   const grep = tools.get('grep')
   assert.ok(grep)
-  let args
+  let args, globArgs
   const original = fixture.fs.wslRpcPool.run.bind(fixture.fs.wslRpcPool)
   fixture.fs.wslRpcPool.run = async (target, request) => {
     if (request.op === 'grep') args = request.args
+    if (request.op === 'glob') globArgs = request.args
     return original(target, request)
   }
   const exec = { agent: { session: { header: { cwd: fixture.cwd } } }, signal: new AbortController().signal }
@@ -118,6 +119,15 @@ for path in ('src/services/deep/needle.ts','src/other/needle.ts','src/components
   const explicit = await grep.execute({ pattern: 'CP15_TARGET', include: 'src/services/**/*.ts', path: '.' }, exec)
   assert.equal(explicit.matches.length, 1)
   assert.notDeepEqual(args.slice(4, 6), ['', 'src/services'], 'explicit path does not inherit session-root pruning')
+  const wildcard = await grep.execute({ pattern: 'CP15_TARGET', include: '**/services/**/*.ts' }, exec)
+  assert.equal(wildcard.matches.length, 1)
+  assert.deepEqual(args.slice(4, 8), ['', '', '', 'services'])
+  const glob = tools.get('glob')
+  assert.ok(glob)
+  const listing = await glob.execute({ pattern: '**/services/**/*.ts' }, exec)
+  assert.equal(listing.paths.length, 1)
+  assert.ok(listing.paths[0].endsWith('src/services/deep/needle.ts'))
+  assert.deepEqual(globArgs.slice(2, 6), ['', '', '', 'services'])
   const file = await fixture.fs.resolve('src/services/deep/needle.ts')
   assert.equal(await fixture.fs.readText(file), 'CP15_TARGET\n')
   const diagnostics = fixture.fs.wslRpcPool.diagnostics()
@@ -147,4 +157,106 @@ printf 'needle target\n' > "$root/src/services/target.ts"
     assert.ok(narrowed.stdout.length<1024)
     assert.equal(matching(narrowed,root,'src/services/**/*.ts').length,1)
   } finally {await runBash('rm -rf -- "$1"',[root])}
+})
+
+
+test('wildcard anchors require one safe literal directory shared by every alternative', () => {
+  const yes = [
+    [['**/services/**/*.tsx'], 'services'],
+    [['*/services/*.ts'], 'services'],
+    [['**/src/services/**/*.tsx'], 'services'],
+    [['**/services/**/*.tsx', '**/other/services/*.ts'], 'services'],
+    [['**/services/deep/**/*.tsx'], 'services'],
+  ]
+  const no = [
+    ['**/*.tsx'], ['**/services.ts'], ['!**/services/**/*.ts'],
+    ['**/node_modules/**/*.ts'], ['**/.private/**/*.ts'], ['**/services/../a.ts'],
+    ['**/services/a\\b.ts'], ['**/{services,components}/**/*.tsx'],
+  ]
+  for (const [globs, expected] of yes) assert.equal(commonLiteralDirectory(globs), expected, globs.join(','))
+  for (const globs of no) assert.equal(commonLiteralDirectory(globs), undefined, globs.join(','))
+  assert.equal(commonLiteralDirectory(expandBraces('**/{services,components}/**/*.tsx')), undefined)
+})
+
+test('one wildcard anchor preserves grep/glob matches, nested paths and symlink behavior', async () => {
+  const root = await fixture(0)
+  try {
+    const init = await runBash([
+      'set -eu',
+      'r=$1',
+      'mkdir -p "$r/src/services/deep/services" "$r/src/other" "$r/src/node_modules/dep" "$r/src/.hidden/private" "$r/src/.git/private"',
+      "printf 'ANCHOR_TARGET top\\n' > \"$r/src/services/one.tsx\"",
+      "printf 'ANCHOR_TARGET deep\\n' > \"$r/src/services/deep/services/two.tsx\"",
+      "printf 'ANCHOR_TARGET other\\n' > \"$r/src/other/three.tsx\"",
+      "printf 'ANCHOR_TARGET node\\n' > \"$r/src/node_modules/dep/four.tsx\"",
+      "printf 'ANCHOR_TARGET hidden\\n' > \"$r/src/.hidden/private/five.tsx\"",
+      "printf 'ANCHOR_TARGET vcs\\n' > \"$r/src/.git/private/six.tsx\"",
+      'ln -s services "$r/src/alias"',
+    ].join('\n'), [root])
+    assert.equal(init.code, 0)
+    const pattern = '**/services/**/*.tsx'
+    const hint = basenameFilters([pattern], true)
+    const broad = await runBash(GREP_SCRIPT, ['ANCHOR_TARGET', '', root, cap, ...hint])
+    const narrow = await runBash(GREP_SCRIPT, ['ANCHOR_TARGET', '', root, cap, '', '', '', 'services', ...hint])
+    assert.equal(broad.code, narrow.code)
+    assert.equal(broad.code, 0)
+    assert.deepEqual(matching(narrow, root, pattern), matching(broad, root, pattern))
+    assert.equal(matching(narrow, root, pattern).length, 2)
+    assert.ok(narrow.stdout.length < broad.stdout.length)
+
+    const globHint = basenameFilters([pattern])
+    const fullGlob = await runBash(GLOB_SCRIPT, [root, cap, ...globHint])
+    const cutGlob = await runBash(GLOB_SCRIPT, [root, cap, '', '', '', 'services', ...globHint])
+    assert.equal(fullGlob.code, cutGlob.code)
+    assert.equal(fullGlob.code, 0)
+    const matchingPaths = run => {
+      const parsed = parseGlobRecords(run.stdout)
+      assert.equal(parsed.root, root)
+      const accepts = compileGlob(pattern)
+      return parsed.files.filter(row => accepts(posix.relative(root, row.path)))
+        .map(row => [row.path, row.mtimeMs]).sort((a, b) => a[0].localeCompare(b[0]))
+    }
+    assert.deepEqual(matchingPaths(fullGlob), matchingPaths(cutGlob))
+    assert.equal(matchingPaths(cutGlob).length, 2)
+    assert.ok(cutGlob.stdout.length < fullGlob.stdout.length)
+
+    // Multiple roots retain the exact original broad traversal, including order.
+    const second = await runBash([
+      'mkdir -p "$1/src/other/services"',
+      "printf 'ANCHOR_TARGET sibling\\n' > \"$1/src/other/services/three.tsx\"",
+    ].join('\n'), [root])
+    assert.equal(second.code, 0)
+    const again = await runBash(GREP_SCRIPT, ['ANCHOR_TARGET', '', root, cap, ...hint])
+    const multi = await runBash(GREP_SCRIPT, ['ANCHOR_TARGET', '', root, cap, '', '', '', 'services', ...hint])
+    assert.equal(multi.code, again.code)
+    assert.deepEqual(multi.stdout, again.stdout)
+    const againGlob = await runBash(GLOB_SCRIPT, [root, cap, ...globHint])
+    const multiGlob = await runBash(GLOB_SCRIPT, [root, cap, '', '', '', 'services', ...globHint])
+    assert.deepEqual(multiGlob.stdout, againGlob.stdout)
+  } finally { await runBash('rm -rf -- "$1"', [root]) }
+})
+
+test('wildcard anchor reduces Linux output BEFORE the grep/glob byte cap', async () => {
+  const root = await fixture(0)
+  try {
+    const init = await runBash([
+      'set -eu',
+      'r=$1',
+      'mkdir -p "$r/src/other" "$r/src/services"',
+      'for ((i=0;i<120;i++)); do printf "ANCHOR_LIMIT unrelated\\n" > "$r/src/other/$i.tsx"; done',
+      'printf "ANCHOR_LIMIT target\\n" > "$r/src/services/target.tsx"',
+    ].join('\n'), [root])
+    assert.equal(init.code, 0)
+    const hint = basenameFilters(['**/services/**/*.tsx'], true), limited = '1024'
+    const broad = await runBash(GREP_SCRIPT, ['ANCHOR_LIMIT', '', root, limited, ...hint])
+    const narrow = await runBash(GREP_SCRIPT, ['ANCHOR_LIMIT', '', root, limited, '', '', '', 'services', ...hint])
+    assert.equal(broad.stdout.length, 1024)
+    assert.ok(narrow.stdout.length < 1024)
+    assert.equal(matching(narrow, root, '**/services/**/*.tsx').length, 1)
+    const gb = await runBash(GLOB_SCRIPT, [root, limited, '*.tsx'])
+    const gn = await runBash(GLOB_SCRIPT, [root, limited, '', '', '', 'services', '*.tsx'])
+    assert.equal(gb.stdout.length, 1024)
+    assert.ok(gn.stdout.length < 1024)
+    assert.equal(parseGlobRecords(gn.stdout).files.length, 1)
+  } finally { await runBash('rm -rf -- "$1"', [root]) }
 })

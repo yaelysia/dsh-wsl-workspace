@@ -191,3 +191,24 @@ export function grepDirectoryPrefix(globs: readonly string[]): string | undefine
   if (common.some(part => part === 'node_modules' || part.startsWith('.'))) return undefined
   return common.join('/')
 }
+
+/**
+ * A directory NAME that every positive, path-shaped alternative must visit.
+ * Unlike a literal prefix, this may appear after leading wildcard directory segments.
+ * For optional pruning only: ambiguous syntax falls back to the original walk.
+ * The caller must keep the final complete glob matcher authoritative.
+ */
+export function commonLiteralDirectory(globs: readonly string[]): string | undefined {
+  if (globs.length === 0 || globs.length > 32) return undefined
+  const candidates = globs.map(pattern => {
+    if (!pattern.includes('/') || pattern.startsWith('!') || /[\\\0\r\n{}]/.test(pattern)) return []
+    const parts = pattern.split('/')
+    if (parts.some(part => part === '' || part === '.' || part === '..')) return []
+    return parts.slice(0, -1).filter(part =>
+      !/[*?\[\]{}]/.test(part) && !part.startsWith('.') && part !== 'node_modules')
+  })
+  if (candidates.some(parts => parts.length === 0)) return undefined
+  const common = candidates[0]!.filter(part => candidates.every(parts => parts.includes(part)))
+  // A longer literal is usually the more selective directory name.
+  return common.sort((a, b) => b.length - a.length)[0]
+}

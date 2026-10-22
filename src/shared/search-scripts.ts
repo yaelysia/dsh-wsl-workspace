@@ -2,7 +2,7 @@
 
 /**
  * GNU grep emits path\0line:text records. After the first four argv fields,
- * optional ["", literal-directory-prefix] restricts the Linux walk only when
+ * optional ["", literal-directory-prefix] or ["", "", "", anchor-name] restricts the Linux walk only when
  * safe, followed by conservative basename hints. The host remains the exact matcher.
  * Hints retain the original hidden-file rule; explicit file targets stay visible.
  * The cap is enforced in Linux and PIPESTATUS preserves grep's exit status.
@@ -10,8 +10,9 @@
 export const GREP_SCRIPT = [
   'set -u',
   'pattern=$1; include=$2; target=$3; cap=$4; shift 4',
-  'prefix=',
+  'prefix=; anchor=',
   'if [ "$#" -ge 2 ] && [ "$1" = "" ]; then prefix=$2; shift 2; fi',
+  'if [ "$#" -ge 2 ] && [ "$1" = "" ]; then anchor=$2; shift 2; fi',
   '[ -n "$target" ] || target=.',
   'if [ -d "$target" ]; then',
   '  target=$(cd -- "$target" && pwd -P)',
@@ -50,6 +51,20 @@ export const GREP_SCRIPT = [
   '  done',
   '  if [ "$safe" = 1 ] && [ "$(cd -- "$candidate" && pwd -P)" = "$candidate" ]; then target=$candidate; fi',
   'fi',
+  // Discover a single non-symlink directory named in EVERY path-shaped alternative.
+  // Enumerate directories only: unlike grep -r, do not open irrelevant files.
+  // For zero/multiple roots, changed paths, or discovery failure: retain broad search.
+  'if [ "$dir" = 1 ] && [ -z "$prefix" ] && [ -n "$anchor" ] && [ "${target##*/}" != node_modules ]; then',
+  '  excludes=(-type d -name node_modules)',
+  '  case ${target##*/} in .*) ;; *) excludes+=(-o -type d -name ".*") ;; esac',
+  '  dirs=()',
+  '  mapfile -d "" -t dirs < <(find "$target" -mindepth 1 \\( "${excludes[@]}" \\) -prune -o -type d -name "$anchor" -print0 -prune 2>/dev/null)',
+  '  walkPid=$!',
+  '  if wait "$walkPid" && [ "${#dirs[@]}" -eq 1 ]; then',
+  '    selected=${dirs[0]}',
+  '    if [ ! -L "$selected" ] && [ -d "$selected" ] && [ "$(cd -- "$selected" && pwd -P)" = "$selected" ]; then target=$selected; fi',
+  '  fi',
+  'fi',
   'grep "${opts[@]}" --regexp="$pattern" -- "$target" | head -c "$cap"',
   'exit "${PIPESTATUS[0]}"',
 ].join('\n')
@@ -62,8 +77,9 @@ export const GREP_SCRIPT = [
 export const GLOB_SCRIPT = [
   'set -u',
   'target=$1; cap=$2; shift 2',
-  "prefix=",
+  "prefix=; anchor=",
   "if [ \"$#\" -ge 2 ] && [ \"$1\" = \"\" ]; then prefix=$2; shift 2; fi",
+  "if [ \"$#\" -ge 2 ] && [ \"$1\" = \"\" ]; then anchor=$2; shift 2; fi",
   'names=()',
   'if [ "$#" -gt 0 ]; then',
   '  names=(\"(\")',
@@ -98,10 +114,23 @@ export const GLOB_SCRIPT = [
   "  allowed+=(-o -path \"$escaped/*\")",
   "  scope=(-type d ! '(' \"${allowed[@]}\" ')' -prune -o -path \"$escaped/*\")",
   "fi",
+  // Discover only directories bearing a mandatory literal name, then scan
+  // their files while keeping the original search-root header and final matcher.
+  'scanTarget=$target',
+  'case ${target##*/} in .git|.hg|.svn|.bzr|.jj|.sl) anchor=;; esac',
+  'if [ -n "$anchor" ] && [ -d "$target" ]; then',
+  '  dirs=()',
+  '  mapfile -d "" -t dirs < <(find "$target" -mindepth 1 \\( "${prune[@]}" \\) -prune -o -type d -name "$anchor" -print0 -prune 2>/dev/null)',
+  '  walkPid=$!',
+  '  if wait "$walkPid" && [ "${#dirs[@]}" -eq 1 ]; then',
+  '    selected=${dirs[0]}',
+  '    if [ ! -L "$selected" ] && [ -d "$selected" ] && [ "$(cd -- "$selected" && pwd -P)" = "$selected" ]; then scanTarget=$selected; fi',
+  '  fi',
+  'fi',
   'if find --version 2>/dev/null | head -n 1 | grep -q GNU; then',
-  "  { printf 'G%s\\0' \"$target\"; find \"$target\" \\( \"${prune[@]}\" \\) -prune -o \"${scope[@]}\" -type f \"${names[@]}\" -printf '%T@\\t%p\\0'; } | head -c \"$cap\"",
+  "  { printf 'G%s\\0' \"$target\"; find \"$scanTarget\" \\( \"${prune[@]}\" \\) -prune -o \"${scope[@]}\" -type f \"${names[@]}\" -printf '%T@\\t%p\\0'; } | head -c \"$cap\"",
   'else',
-  "  { printf 'P%s\\0' \"$target\"; find \"$target\" \\( \"${prune[@]}\" \\) -prune -o \"${scope[@]}\" -type f \"${names[@]}\" -print0; } | head -c \"$cap\"",
+  "  { printf 'P%s\\0' \"$target\"; find \"$scanTarget\" \\( \"${prune[@]}\" \\) -prune -o \"${scope[@]}\" -type f \"${names[@]}\" -print0; } | head -c \"$cap\"",
   'fi',
   'exit "${PIPESTATUS[0]}"',
 ].join('\n')

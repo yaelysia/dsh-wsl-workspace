@@ -1,0 +1,86 @@
+name: wildcard-anchor-performance
+on:
+  pull_request:
+    paths:
+      - 'src/host/wsl-search.ts'
+      - 'src/shared/search-patterns.ts'
+      - 'src/shared/search-scripts.ts'
+      - 'scripts/benchmark-wildcard-anchor.mjs'
+      - 'tests/grep-prune.test.mjs'
+      - 'lib/**'
+      - 'package.json'
+      - '.github/workflows/wildcard-anchor-performance.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  measured:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            wsl: 0
+          - os: windows-latest
+            wsl: 2
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    env:
+      WSL_COMPAT_DISTRO: Ubuntu-24.04
+      MSYS_NO_PATHCONV: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: node ci/install-pinned.mjs
+      - uses: Vampire/setup-wsl@v3
+        if: matrix.wsl != 0
+        with:
+          distribution: Ubuntu-24.04
+          additional-packages: python3
+      - name: Require actual WSL2
+        if: matrix.wsl == 2
+        timeout-minutes: 5
+        run: |
+          mkdir -p logs
+          current=$(wsl.exe -l -v | tr -d '\0\r' | sed 's/[[:space:]]*$//' | grep -F "$WSL_COMPAT_DISTRO" | grep -oE '[12]$' || true)
+          if [ "$current" != 2 ]; then wsl.exe --set-version "$WSL_COMPAT_DISTRO" 2; fi
+          wsl.exe -l -v | tr -d '\0\r' | tee logs/wsl-version.txt
+          grep -F "$WSL_COMPAT_DISTRO" logs/wsl-version.txt | grep -E '[[:space:]]2$'
+          wsl.exe -d "$WSL_COMPAT_DISTRO" -e uname -r | tee logs/wsl-kernel.txt
+      - name: Source and built grep contracts
+        run: |
+          mkdir -p logs
+          npm run test:grep-prune 2>&1 | tee logs/grep-prune-src.txt
+          DSH_WSL_TEST_PLANE=lib npm run test:grep-prune 2>&1 | tee logs/grep-prune-lib.txt
+      - name: Paired registered wildcard grep/glob and control workloads
+        run: |
+          git worktree add --detach .cp17-baseline 053a71a5941c9bcec51a8e371c31aa279087ad36
+          node -e "require('node:fs').symlinkSync(require('node:path').resolve('node_modules'), '.cp17-baseline/node_modules', process.platform === 'win32' ? 'junction' : 'dir')"
+          npm run bench:wildcard-anchor -- --baseline .cp17-baseline --iterations 20 --output logs/wildcard-bench.json > logs/wildcard-bench.log 2>&1
+          git worktree remove --force .cp17-baseline
+          node --input-type=module <<'NODE'
+          import {readFileSync,writeFileSync} from 'node:fs'
+          const benchmark=JSON.parse(readFileSync('logs/wildcard-bench.json'))
+          const summary={platform:benchmark.platform,baselineSha:benchmark.baselineSha,
+            rows:benchmark.rows.map(r=>({name:r.scenario,op:r.operation,
+              before:{p50:r.before.p50Ms,p95:r.before.p95Ms},
+              after:{p50:r.after.p50Ms,p95:r.after.p95Ms},
+              decodedRpcStdoutBytes:r.decodedRpcStdoutBytes,matchCount:r.matchCount}))}
+          writeFileSync('logs/summary.json',JSON.stringify(summary,null,2)+'\n')
+          console.log(JSON.stringify(summary,null,2))
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wildcard-anchor-${{ matrix.os }}-wsl${{ matrix.wsl }}
+          path: logs/
+          retention-days: 14
