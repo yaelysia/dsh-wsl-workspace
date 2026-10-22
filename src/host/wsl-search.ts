@@ -73,7 +73,7 @@ import type { SpillRef } from '@deepseek-ai/dsh-spill'
 import { isAbsoluteLinuxPath, parseWslUnc, windowsToMntPath } from '../shared/paths.ts'
 import { decodeWslOutput, defaultDistroSync } from '../shared/wsl.ts'
 import { getWorkspaceUsername } from '../shared/wsl-credentials.ts'
-import { basenameFilters, compileGlob, expandBraces, globDirectoryPrefix, grepDirectoryPrefix } from '../shared/search-patterns.ts'
+import { basenameFilters, commonLiteralDirectory, compileGlob, expandBraces, globDirectoryPrefix, grepDirectoryPrefix } from '../shared/search-patterns.ts'
 import { GREP_SCRIPT, GLOB_SCRIPT } from '../shared/search-scripts.ts'
 import { WslRpcPool, RpcTransportError, type RpcRun as WslRun } from '../shared/rpc-transport.ts'
 import { resolveRpcConfig, RPC_DEFAULTS } from '../shared/rpc-config.ts'
@@ -894,12 +894,14 @@ function registerGrep(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
       // A mixed brace union or negated/ambiguous alternative cannot narrow it.
       const prefix = input.path === undefined && globs.length === pathShaped.length
         ? grepDirectoryPrefix(pathShaped) : undefined
+      const anchor = input.path === undefined && prefix === undefined && globs.length === pathShaped.length
+        ? commonLiteralDirectory(pathShaped) : undefined
       const values = [
         input.pattern,
         pathShaped.length > 0 ? '' : globs.join('\n'),
         linuxTarget(input.path),
         String(config.rawOutputMaxBytes + 1),
-        ...(prefix === undefined ? [] : ['', prefix]),
+        ...(prefix !== undefined ? ['', prefix] : anchor !== undefined ? ['', '', '', anchor] : []),
         ...(pathShaped.length > 0 ? basenameFilters(pathShaped, true) : []),
       ]
       const run = await executeSearch(target, 'grep', values, exec.signal)
@@ -988,8 +990,10 @@ function registerGlob(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
         throw new SearchError('glob is only available in a WSL workspace session', 'SEARCH_FAILED')
       }
       const prefix = globDirectoryPrefix(input.pattern)
+      const anchor = prefix === undefined ? commonLiteralDirectory([input.pattern]) : undefined
       const values = [linuxTarget(input.path), String(config.rawOutputMaxBytes + 1),
-        ...(prefix === undefined ? [] : ['', prefix]), ...basenameFilters([input.pattern])]
+        ...(prefix !== undefined ? ['', prefix] : anchor !== undefined ? ['', '', '', anchor] : []),
+        ...basenameFilters([input.pattern])]
       const run = await executeSearch(target, 'glob', values, exec.signal)
       const stdout = acceptRun(run, 'glob', config.rawOutputMaxBytes)
       const listing = parseGlobRecords(stdout)
