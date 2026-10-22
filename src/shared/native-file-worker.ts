@@ -268,6 +268,21 @@ def atomic(path, req, editing=False):
 
 def run(op, req):
     path = req['path']
+    if op == 'fs.snapshot':
+        # Read-tool-only transaction: resolve, observe, and (for small regular
+        # files) read within one native round trip. The original per-call
+        # physical path and fresh inode checks are reused, never cached.
+        threshold = req.get('streamMinSize')
+        if type(threshold) is not int or threshold < 1:
+            fail('FS_IO_ERROR', 'invalid snapshot streaming threshold')
+        path = canonical(path)
+        state = probe(path)
+        metadata = None if state is None else info(state)
+        data = None
+        if (state is not None and stat.S_ISREG(state.st_mode)
+                and state.st_size < threshold and not path.startswith('/mnt/')):
+            data = base64.b64encode(read_bytes(path, MAX_CONTENT)).decode('ascii')
+        return {'path': path, 'info': metadata, 'data': data}
     if op == 'fs.resolve': return {'path': canonical(path)}
     if op == 'fs.lstat':
         parent, name = path.rsplit('/', 1)
