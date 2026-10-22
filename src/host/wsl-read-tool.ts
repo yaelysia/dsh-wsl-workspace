@@ -8,7 +8,7 @@ import { FsError } from '@deepseek-ai/dsh-fs'
 import type { FsInfo, FsTarget } from '@deepseek-ai/dsh-fs'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolExecution, ToolResult } from '@deepseek-ai/dsh-tools'
-import { readLangHintForPath } from '@deepseek-ai/dsh-util-code-language'
+import { readLangHintForPath } from '../shared/read-language.ts'
 import z from '@deepseek-ai/schemastery'
 
 export const inject = ['tools', 'fs', 'systemPrompt', 'workingDirectory']
@@ -163,7 +163,9 @@ export function apply(ctx: Context, config: Config = {}): void {
       },
       presentationMeta: (_args, value: ReadValue) => {
         const lang = readLangHintForPath(value.path)
-        return { ...value, ...lang === undefined ? {} : { lang } }
+        return { path: value.path, offset: value.offset,
+          lines: value.lines.map(({ number, text }) => ({ number, text })),
+          totalLines: value.totalLines, ...lang === undefined ? {} : { lang } }
       },
     },
     isConcurrencySafe: () => true,
