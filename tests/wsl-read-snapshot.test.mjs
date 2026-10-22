@@ -27,7 +27,7 @@ function legacyFs(fs) {
       const info=await fs.stat(target,options.signal)
       const text=info?.type==='file' && info.size!==undefined && info.size<options.streamMinSize
         ? await fs.readText(target,options.signal) : undefined
-      return {target,info,...text===undefined?{}:{text}}
+      return {target,info,...(text===undefined?{}:{text})}
     },
     streamText:fs.streamText.bind(fs),
     processPath:fs.processPath.bind(fs),
