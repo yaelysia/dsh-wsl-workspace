@@ -47,6 +47,7 @@ jobs:
           done
           npm run test:unit
           node tests/host-materialize.mjs
+          npm run typecheck > cp18-tsc.log 2>&1 || { echo "::group::Compiler diagnostics"; cat cp18-tsc.log; echo "::endgroup::"; }
           npm run typecheck:gate
       - name: Publish committed lib from tested src
         run: |
