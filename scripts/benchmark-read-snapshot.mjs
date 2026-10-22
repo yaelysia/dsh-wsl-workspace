@@ -44,7 +44,9 @@ pool.run=(where,request)=>{
   return original(where,request)
 }
 const exec={agent:{session:{header:{cwd:fixture.cwd}}},signal:new AbortController().signal}
-const expected=Array.from({length:fcount},(_,i)=>('CP18_'+String(i).padStart(2,'0')).padEnd(fsize,'x'))
+const expected=Array.from({length:fcount},(_,i)=>[
+  ('CP18_'+String(i).padStart(2,'0')).padEnd(63,'x'), ...Array(63).fill('x'.repeat(63)),
+])
 const summarize=values=>{const sort=[...values].sort((a,b)=>a-b)
   return {p50Ms:+sort[Math.ceil(sort.length*.5)-1].toFixed(3),
     p95Ms:+sort[Math.ceil(sort.length*.95)-1].toFixed(3),rawMs:values}}
@@ -52,7 +54,7 @@ try{
   await python(String.raw`import os,sys
 r=sys.argv[1];os.makedirs(r+'/small',exist_ok=True)
 for i in range(24):
-    content=('CP18_%02d'%i).encode().ljust(4096,b'x')
+    content=('CP18_%02d'%i).encode().ljust(63,b'x')+b'\n'+(b'x'*63+b'\n')*63
     with open(r+'/small/'+str(i)+'.txt','wb') as file:file.write(content)
 `,[fixture.root])
   const samples={old:[],next:[]},counts={old:[],next:[]}
@@ -63,9 +65,10 @@ for i in range(24):
       for(let index=0;index<fcount;index++){
         const args={file_path:'small/'+index+'.txt'}
         const answer=await (name==='old'?before:next).execute(args,exec)
-        assert.equal(answer.lines.length,1)
-        assert.equal(answer.lines[0].text,expected[index])
-        assert.equal(answer.totalLines,1)
+        assert.equal(answer.lines.length,64)
+        assert.deepEqual(answer.lines.map(line=>line.text),expected[index])
+        assert.deepEqual(answer.lines.map(line=>line.number),Array.from({length:64},(_,i)=>i+1))
+        assert.equal(answer.totalLines,64)
       }
       const elapsed=performance.now()-now
       measuring=undefined
