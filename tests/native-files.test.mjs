@@ -76,6 +76,83 @@ test('native reads preserve bytes; strict UTF-8, BOM and sampled binary rules ma
   await assert.rejects(fs.readText(await fs.resolve(root)), codeIs('FS_NOT_REGULAR_FILE'))
 })
 
+test('concurrent native read chains coalesce RPCs but keep independent fresh results', async t => {
+  const { fs, root } = await fixture(t)
+  await python(String.raw`import os,sys
+r=sys.argv[1]
+for i in range(8):
+    with open(r+'/cp16-'+str(i)+'.txt','w') as file: file.write('row-'+str(i)+'\\n')
+`, [root])
+  const pool = fs.wslRpcPool
+  const original = pool.run.bind(pool), observed = []
+  pool.run = (target, request) => {
+    observed.push(request.op)
+    return original(target, request)
+  }
+  await Promise.all(Array.from({ length: 8 }, async (_, i) => {
+    const target = await fs.resolve('cp16-'+i+'.txt')
+    const info = await fs.stat(target)
+    assert.equal(info?.type, 'file')
+    assert.equal(await fs.readText(target), 'row-'+i+'\\n')
+  }))
+  assert.deepEqual(observed, Array(6).fill('fs.batch'),
+    '8 concurrent resolve/stat/read chains should use 1+1+4 native RPCs')
+  assert.equal(pool.diagnostics().pending, 0)
+
+  observed.length = 0
+  const target = await fs.resolve('cp16-0.txt')
+  assert.equal((await fs.stat(target)).size, 6)
+  assert.equal(await fs.readText(target), 'row-0\\n')
+  assert.deepEqual(observed, ['fs.resolve', 'fs.stat', 'fs.read'],
+    'sequential callers must keep fresh one-operation semantics')
+})
+
+test('batched native read failures never poison healthy sibling results', async t => {
+  const { fs, root } = await fixture(t)
+  await writeRaw(root+'/good.txt', 'ok')
+  await writeRaw(root+'/bad.txt', Buffer.from([0xff]))
+  await python('import os,sys;os.mkdir(sys.argv[1])', [root+'/folder'])
+  const paths = ['good.txt', 'bad.txt', 'folder', 'absent.txt']
+  const targets = await Promise.all(paths.map(path => fs.resolve(path)))
+  const answers = await Promise.allSettled(targets.map(target => fs.readText(target)))
+  assert.equal(answers[0].status, 'fulfilled')
+  assert.equal(answers[0].value, 'ok')
+  for (const [index, code] of [[1, 'FS_NOT_TEXT'], [2, 'FS_NOT_REGULAR_FILE'], [3, 'FS_NOT_FOUND']]) {
+    assert.equal(answers[index].status, 'rejected')
+    assert.equal(answers[index].reason.code, code)
+  }
+  assert.equal(fs.wslRpcPool.diagnostics().pending, 0)
+})
+
+test('cancelling one request leaves other batched caller alive', async () => {
+  const calls = []
+  let reply
+  const pool = {
+    metrics: { record() {} },
+    run(_target, request) {
+      calls.push(request)
+      return new Promise(resolve => { reply = resolve })
+    },
+  }
+  const client = new NativeFileClient(pool)
+  const target = { distro: 'Ubuntu', wslPath: 'wsl.exe', linuxCwd: '/' }
+  const abortA = new AbortController(), abortB = new AbortController()
+  const a = client.resolve(target, '/a', { signal: abortA.signal })
+  const b = client.resolve(target, '/b', { signal: abortB.signal })
+  await delay(5)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].op, 'fs.batch')
+  abortA.abort()
+  await assert.rejects(a, codeIs('FS_ABORTED'))
+  assert.equal(calls[0].signal.aborted, false, 'a sibling cancellation cannot kill the shared batch')
+  reply({ code: 0, aborted: false, signal: null, stderr: Buffer.alloc(0),
+    stdout: Buffer.from(JSON.stringify({ ok: true, committed: false, value: [
+      { ok: true, committed: false, value: { path: '/a' } },
+      { ok: true, committed: false, value: { path: '/b' } },
+    ] })) })
+  assert.equal(await b, '/b')
+})
+
 test('native stream handles UTF-8 split boundaries and refuses a changed file between chunks', async t => {
   const { fs, root } = await fixture(t)
   const text = 'a'.repeat(256 * 1024 - 1) + '🙂中文' + 'b'.repeat(300_000)
