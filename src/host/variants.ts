@@ -223,6 +223,7 @@ function wslWorldGroup(
   imagePath?: string,
   searchOptions?: ResolvedRpcConfig,
   fileOptions?: FileOptions,
+  readPath?: string,
 ): string {
   return [
     '# ── WSL execution world (dsh-wsl-workspace variant) ─────────────────────',
@@ -260,6 +261,13 @@ function wslWorldGroup(
       : []),
     '    - id: tool-fs',
     "      name: '@deepseek-ai/dsh-tool-fs'",
+    '      config:',
+    '        read: false',
+    // Keep the stock write/edit tools. WSL read has a scoped native fast path.
+    ...(readPath === undefined ? [] : [
+      '    - id: read-wsl',
+      `      name: '${readPath.replace(/'/g, "''")}'`,
+    ]),
     // The world's answer for `read_image`, mounted beside the row whose registration of it cannot
     // reach this realm. See `src/host/wsl-image-tool.ts` for what it takes over and why the
     // isolation above stays.
@@ -536,6 +544,7 @@ export function transformPresetForWsl(
   imagePath?: string,
   searchOptions?: ResolvedRpcConfig,
   fileOptions?: FileOptions,
+  readPath?: string,
 ): string {
   const lines = source.split('\n')
   const spans = topLevelSpans(lines)
@@ -583,7 +592,7 @@ export function transformPresetForWsl(
   if (source.includes('tool-jobs')) sawJobs = true
   const result = [...kept]
   if (result.length > 0 && result[result.length - 1] !== '') result.push('')
-  result.push(wslWorldGroup(shellPath, fsPath, sawEditor, persistent, sawSearch ? searchPath : undefined, jobsPath, sawJobs, imagePath, searchOptions, fileOptions))
+  result.push(wslWorldGroup(shellPath, fsPath, sawEditor, persistent, sawSearch ? searchPath : undefined, jobsPath, sawJobs, imagePath, searchOptions, fileOptions, readPath))
   return result.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '\n')
 }
 
