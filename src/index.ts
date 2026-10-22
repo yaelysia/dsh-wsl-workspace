@@ -838,7 +838,7 @@ async function waitForSubprocess(ctx: Context): Promise<SubprocessProbeFace | un
 async function materializeVariants(
   agentPresets: AgentPresetsService,
   dshHome: string,
-  paths: { shell: string; fs: string; relay: string; node: string; sandbox: string; search: string; jobs: string; bashTool: string; terminalTool: string; image: string; shellMode: 'session' | 'pty'; searchOptions?: ResolvedRpcConfig; fileOptions?: FileOptions },
+  paths: { shell: string; fs: string; relay: string; node: string; sandbox: string; search: string; jobs: string; bashTool: string; terminalTool: string; image: string; read: string; shellMode: 'session' | 'pty'; searchOptions?: ResolvedRpcConfig; fileOptions?: FileOptions },
   persistentShell: boolean,
   track: (dispose: unknown) => void,
   generation: number,
@@ -936,7 +936,7 @@ async function materializeOne(
   agentPresets: AgentPresetsService,
   preset: AgentPresetRosterEntry,
   userRoot: string,
-  paths: { shell: string; fs: string; relay: string; node: string; sandbox: string; search: string; jobs: string; bashTool: string; terminalTool: string; image: string; shellMode: 'session' | 'pty'; searchOptions?: ResolvedRpcConfig; fileOptions?: FileOptions },
+  paths: { shell: string; fs: string; relay: string; node: string; sandbox: string; search: string; jobs: string; bashTool: string; terminalTool: string; image: string; read: string; shellMode: 'session' | 'pty'; searchOptions?: ResolvedRpcConfig; fileOptions?: FileOptions },
   persistentShell: boolean,
   track: (dispose: unknown) => void,
   generated: Set<string>,
@@ -950,7 +950,7 @@ async function materializeOne(
     bashPath: paths.bashTool,
     terminalTool: paths.terminalTool,
     mode: paths.shellMode,
-  } : undefined, paths.search, paths.jobs, paths.image, paths.searchOptions, paths.fileOptions)
+  } : undefined, paths.search, paths.jobs, paths.image, paths.searchOptions, paths.fileOptions, paths.read)
   // 0.1.7-alpha.1+ publishes a variant as a declaration row (the composition is
   // already the exact entry-list dialect the declaration wants, so the only
   // conversion is YAML back to rows); earlier releases still discover one as
@@ -1067,6 +1067,7 @@ export function apply(ctx: Context, config: Config): void {
   // world cuts, so it answers `cannot get property "fs" without inject` here (issue #54); this row
   // resolves `fs` by realm key instead. See `src/host/wsl-image-tool.ts`.
   const imagePath = join(packageRoot, 'lib', 'wsl-image-tool.js').replace(/\\/g, '/')
+  const readPath = join(packageRoot, 'lib', 'wsl-read-tool.js').replace(/\\/g, '/')
 
   // Issue #78: `run_code` is the host's, and on a `\\wsl.localhost\…` root with `workspace-write` the
   // Windows sandbox cannot start at all. Refuse that one shape in words instead of letting the worker
@@ -1173,6 +1174,7 @@ export function apply(ctx: Context, config: Config): void {
           bashTool: bashToolPath,
           terminalTool: terminalToolPath,
           image: imagePath,
+          read: readPath,
           shellMode,
         }, persistentShell, track, myGeneration)
       })().catch((error) => {
