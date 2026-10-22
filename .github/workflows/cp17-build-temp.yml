@@ -43,5 +43,12 @@ jobs:
           git add -A lib
           if ! git diff --cached --quiet; then
             git commit -m 'build(cp17): synchronize verified wildcard search library'
+            git fetch origin refs/heads/perf/cp17-wildcard-anchor-prune
+            # Never publish a stale build if the source changed since checkout.
+            if ! git diff --quiet HEAD..FETCH_HEAD -- src/shared/search-patterns.ts src/shared/search-scripts.ts src/host/wsl-search.ts; then
+              echo 'Source changed during build; refusing to publish stale lib'
+              exit 1
+            fi
+            git rebase FETCH_HEAD
             git push origin HEAD:refs/heads/perf/cp17-wildcard-anchor-prune
           fi
