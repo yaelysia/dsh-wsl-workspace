@@ -285,7 +285,7 @@ def run(op, req):
         metadata = None if state is None else info(state)
         data = None
         if (state is not None and stat.S_ISREG(state.st_mode)
-                and state.st_size < threshold and not path.startswith('/mnt/')):
+                and state.st_size < threshold):
             data = base64.b64encode(read_bytes(path, MAX_CONTENT)).decode('ascii')
         return {'path': path, 'info': metadata, 'data': data}
     if op == 'fs.resolve': return {'path': canonical(path)}
