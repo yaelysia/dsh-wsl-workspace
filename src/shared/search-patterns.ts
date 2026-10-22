@@ -194,7 +194,7 @@ export function grepDirectoryPrefix(globs: readonly string[]): string | undefine
 
 /**
  * A directory NAME that every positive, path-shaped alternative must visit.
- * Unlike a literal prefix, this may appear after leading **/ or */ segments.
+ * Unlike a literal prefix, this may appear after leading wildcard directory segments.
  * For optional pruning only: ambiguous syntax falls back to the original walk.
  * The caller must keep the final complete glob matcher authoritative.
  */
