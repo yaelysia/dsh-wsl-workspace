@@ -36,6 +36,16 @@ interface Line { number: number; text: string }
 interface ReadValue { path: string; offset: number; lines: Line[]; totalLines: number }
 interface ReadMeta extends ReadValue { lang?: string }
 
+/** Cordis host event augmentation differs across published type releases.
+ * Preserve the runtime event shape without changing the DSH observer contract. */
+function recordObserved(ctx: Context, target: FsTarget,
+  observation: { kind: 'absent' } | { kind: 'present'; version: FsInfo['version'] },
+  exec: ToolExecution): void {
+  const publisher = ctx as unknown as { emit(
+    event: 'fs/observed', target: FsTarget, observed: typeof observation, exec: ToolExecution): void }
+  publisher.emit('fs/observed', target, observation, exec)
+}
+
 function readArgs(args: { file_path: string; offset?: number; limit?: number }, maxLimit: number) {
   if (args.file_path.trim().length === 0) throw new Error('file_path must be a non-empty string')
   const positive = (value: number, label: string) => {
@@ -181,7 +191,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       })
       const { target, info } = snapshot
       if (!info) {
-        ctx.emit('fs/observed', target, { kind: 'absent' }, exec)
+        recordObserved(ctx, target, { kind: 'absent' }, exec)
         throw new FsError(`cannot read "${target.displayPath}": not found`, 'FS_NOT_FOUND')
       }
       if (info.type !== 'file') throw new FsError(`cannot read "${target.displayPath}": not a regular file`, 'FS_NOT_REGULAR_FILE')
@@ -193,7 +203,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       }, target.displayPath)
       const value = { path: fs.processPath(target), offset: input.offset,
         lines: window.lines, totalLines: window.totalLines }
-      ctx.emit('fs/observed', target, { kind: 'present', version: info.version }, exec)
+      recordObserved(ctx, target, { kind: 'present', version: info.version }, exec)
       return value
     },
     presentResult(_args, result: ToolResult) {
