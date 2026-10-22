@@ -261,8 +261,7 @@ function wslWorldGroup(
       : []),
     '    - id: tool-fs',
     "      name: '@deepseek-ai/dsh-tool-fs'",
-    '      config:',
-    '        read: false',
+    ...(readPath === undefined ? [] : ['      config:', '        read: false']),
     // Keep the stock write/edit tools. WSL read has a scoped native fast path.
     ...(readPath === undefined ? [] : [
       '    - id: read-wsl',
