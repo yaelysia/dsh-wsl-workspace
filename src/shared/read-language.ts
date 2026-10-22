@@ -75,7 +75,7 @@ const BY_EXTENSION = new Map(Object.entries(EXTENSIONS).flatMap(([language, name
 
 /** Plain text for unknown extensions; both Unix and Windows separators match upstream. */
 export function readLangHintForPath(path: string): string | undefined {
-  const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\\\'))
+  const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   const base = path.slice(slash + 1)
   const dot = base.lastIndexOf('.')
   return dot < 0 ? undefined : BY_EXTENSION.get(base.slice(dot + 1).toLowerCase())
