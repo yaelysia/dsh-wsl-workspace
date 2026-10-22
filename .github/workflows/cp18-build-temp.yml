@@ -5,6 +5,7 @@ on:
     paths:
       - 'src/**'
       - 'tests/wsl-read-snapshot.test.mjs'
+      - 'tests/rpc-loader-entry.test.mjs'
       - 'tests/host-materialize.mjs'
       - 'scripts/benchmark-read-snapshot.mjs'
       - 'scripts/compatibility/plane.mjs'
