@@ -276,6 +276,11 @@ def run(op, req):
         if type(threshold) is not int or threshold < 1:
             fail('FS_IO_ERROR', 'invalid snapshot streaming threshold')
         path = canonical(path)
+        # /mnt/<drive> is served by the Windows backend. Do not probe that
+        # drvfs inode here: Linux may deny access where Win32 can still read.
+        if (len(path) >= 6 and path.startswith('/mnt/') and path[5].isascii()
+                and path[5].isalpha() and (len(path) == 6 or path[6] == '/')):
+            return {'path': path, 'info': None, 'data': None}
         state = probe(path)
         metadata = None if state is None else info(state)
         data = None
