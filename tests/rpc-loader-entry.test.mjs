@@ -46,6 +46,8 @@ async function harness(t) {
   t.after(async () => { await ctx.fiber.dispose(); await f.cleanup() })
   await ctx.plugin(Loader)
   await ctx.plugin(ToolSink)
+  ctx.provide('workingDirectory', { async ensure() { return f.cwd } })
+  ctx.provide('systemPrompt', { getSectionOrder() { return 1 }, section() {} })
   // A real isolated world must neither borrow nor dispose the root's filesystem.
   ctx.provide('fs', { rpcPoolFor() { throw new Error('search escaped its isolated filesystem realm') } })
   const loader = ctx.get('loader')
@@ -57,18 +59,21 @@ async function harness(t) {
   const generated = parseYaml(transformPresetForWsl(
     '- id: tool-fs-search\n  name: "@deepseek-ai/dsh-tool-fs-search"\n',
     'cordis:unused-shell', 'cordis:fixture-files', undefined, pathToFileURL(resolvePath('search')).href,
+    undefined, undefined, undefined, undefined, pathToFileURL(resolvePath('wsl-read-tool')).href,
   ))
   const world = generated.find(row => row.id === 'wsl-world')
   assert.equal(world.isolate.fs, true)
   const fileRow = world.config.find(row => row.id === 'fs-wsl')
   fileRow.config = { cwd: f.cwd, backend: 'native', diffBasisMaxBytes: 1024 }
   const searchRow = world.config.find(row => row.id === 'search-wsl')
+  const readRow = world.config.find(row => row.id === 'read-wsl')
+  assert.ok(readRow, 'the transformed world must mount a native snapshot read')
   // These are the generated group and real search file URL. No replacement
   // import(), fake unwrapExports(), or namespace-based ctx.plugin(search).
   await loader.create({ ...world, config: [] })
   const scope = loader.resolveGroup(world.id).ctx
   assert.equal(scope.get('fs'), undefined)
-  return { f, ctx, loader, scope, world, fileRow, searchRow, tools: ctx.get('tools').active }
+  return { f, ctx, loader, scope, world, fileRow, searchRow, readRow, tools: ctx.get('tools').active }
 }
 
 function execution(f) {
@@ -95,6 +100,29 @@ async function operate(h, expected = 'AFTER') {
   assert.equal(diag.fallbacks, 0)
   return { fs, target, pool: fs.wslRpcPool }
 }
+
+
+test('actual Loader mounts the WSL read tool and replaces three native file RPCs with one', { timeout: 30000 }, async t => {
+  const h = await harness(t)
+  await h.loader.create(h.fileRow, h.world.id)
+  await h.loader.create(h.readRow, h.world.id)
+  await until(() => h.tools.has('read') && h.scope.get('fs'))
+  const fs = h.scope.get('fs')
+  const target = await fs.resolve('loader-read.txt')
+  await fs.writeText(target, 'snapshot\nfrom loader\n')
+  const captured = []
+  const pool = fs.wslRpcPool, base = pool.run.bind(pool)
+  pool.run = (where, request) => { captured.push(request.op); return base(where, request) }
+  const value = await h.tools.get('read').execute({ file_path: 'loader-read.txt' }, execution(h.f))
+  assert.equal(value.path, h.f.root + '/loader-read.txt')
+  assert.deepEqual(value.lines, [
+    { number: 1, text: 'snapshot' },
+    { number: 2, text: 'from loader' },
+  ])
+  assert.deepEqual(captured, ['fs.snapshot'])
+  assert.equal(pool.diagnostics().pending, 0)
+  assert.equal(pool.diagnostics().fallbacks, 0)
+})
 
 test('the actual Loader-selected default preserves dependency and schema metadata', () => {
   const selected = Loader.prototype.unwrapExports(search)
