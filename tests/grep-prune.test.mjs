@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { GLOB_SCRIPT, GREP_SCRIPT } from '../src/shared/search-scripts.ts'
-import { basenameFilters, compileGlob, expandBraces, grepDirectoryPrefix } from '../src/shared/search-patterns.ts'
+import { basenameFilters, commonLiteralDirectory, compileGlob, expandBraces, grepDirectoryPrefix } from '../src/shared/search-patterns.ts'
 import { fixture, runBash } from '../scripts/benchmark-search.mjs'
 import { makeFixture, python } from './support/native-fixture.mjs'
 import { load } from '../scripts/compatibility/plane.mjs'
-import { parseGrepRecords } from '../src/host/wsl-search.ts'
+import { parseGlobRecords, parseGrepRecords } from '../src/host/wsl-search.ts'
 import { posix } from 'node:path'
 
 const cap = String(20_000_000)
@@ -101,10 +101,11 @@ for path in ('src/services/deep/needle.ts','src/other/needle.ts','src/components
   }, { grepMaxMatches: 3000, rawOutputMaxBytes: 20_000_000 })
   const grep = tools.get('grep')
   assert.ok(grep)
-  let args
+  let args, globArgs
   const original = fixture.fs.wslRpcPool.run.bind(fixture.fs.wslRpcPool)
   fixture.fs.wslRpcPool.run = async (target, request) => {
     if (request.op === 'grep') args = request.args
+    if (request.op === 'glob') globArgs = request.args
     return original(target, request)
   }
   const exec = { agent: { session: { header: { cwd: fixture.cwd } } }, signal: new AbortController().signal }
@@ -118,6 +119,15 @@ for path in ('src/services/deep/needle.ts','src/other/needle.ts','src/components
   const explicit = await grep.execute({ pattern: 'CP15_TARGET', include: 'src/services/**/*.ts', path: '.' }, exec)
   assert.equal(explicit.matches.length, 1)
   assert.notDeepEqual(args.slice(4, 6), ['', 'src/services'], 'explicit path does not inherit session-root pruning')
+  const wildcard = await grep.execute({ pattern: 'CP15_TARGET', include: '**/services/**/*.ts' }, exec)
+  assert.equal(wildcard.matches.length, 1)
+  assert.deepEqual(args.slice(4, 8), ['', '', '', 'services'])
+  const glob = tools.get('glob')
+  assert.ok(glob)
+  const listing = await glob.execute({ pattern: '**/services/**/*.ts' }, exec)
+  assert.equal(listing.paths.length, 1)
+  assert.ok(listing.paths[0].endsWith('src/services/deep/needle.ts'))
+  assert.deepEqual(globArgs.slice(2, 6), ['', '', '', 'services'])
   const file = await fixture.fs.resolve('src/services/deep/needle.ts')
   assert.equal(await fixture.fs.readText(file), 'CP15_TARGET\n')
   const diagnostics = fixture.fs.wslRpcPool.diagnostics()
