@@ -1,0 +1,50 @@
+# Temporary branch-only delivery gate. Remove after the generated lib/ has landed.
+name: cp16-build-temp
+on:
+  push:
+    branches: ['perf/cp16-read-rpc-microbatch']
+    paths:
+      - 'src/shared/native-files.ts'
+      - 'src/shared/native-file-worker.ts'
+      - 'src/shared/rpc-worker.ts'
+      - 'src/shared/rpc-metrics.ts'
+      - 'tests/native-files.test.mjs'
+      - '.github/workflows/cp16-build-temp.yml'
+permissions:
+  contents: write
+jobs:
+  publish-verified-library:
+    if: github.repository == 'yaelysia/dsh-wsl-workspace'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: node ci/install-pinned.mjs
+      - run: npm run build
+      - name: Source native semantics, real loader, RPC lifecycle
+        env:
+          DSH_WSL_TEST_PLANE: src
+        run: |
+          npm run test:native-files
+          npm run test:rpc-loader
+          npm run test:rpc-owner
+          npm run test:rpc-mixed
+          npm run test:search-transport
+          npm run typecheck:gate
+      - name: Commit exact reproducible lib bytes on development branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A lib
+          if git diff --cached --quiet; then
+            echo 'No library changes'
+          else
+            git commit -m 'build(cp16): synchronize native batching source and library'
+            git push origin HEAD:refs/heads/perf/cp16-read-rpc-microbatch
+          fi
