@@ -126,6 +126,7 @@
     "@deepseek-ai/dsh-timeout": "*",
     "@deepseek-ai/dsh-tool-fs-search": "*",
     "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-util-code-language": "*",
     "@deepseek-ai/schemastery": "*"
   },
   "peerDependenciesMeta": {
@@ -154,6 +155,9 @@
       "optional": true
     },
     "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-util-code-language": {
       "optional": true
     },
     "@deepseek-ai/schemastery": {
