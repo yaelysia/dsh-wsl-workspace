@@ -54,7 +54,7 @@ export const GREP_SCRIPT = [
   // Discover a single non-symlink directory named in EVERY path-shaped alternative.
   // Enumerate directories only: unlike grep -r, do not open irrelevant files.
   // For zero/multiple roots, changed paths, or discovery failure: retain broad search.
-  'if [ "$dir" = 1 ] && [ -z "$prefix" ] && [ -n "$anchor" ]; then',
+  'if [ "$dir" = 1 ] && [ -z "$prefix" ] && [ -n "$anchor" ] && [ "${target##*/}" != node_modules ]; then',
   '  excludes=(-type d -name node_modules)',
   '  case ${target##*/} in .*) ;; *) excludes+=(-o -type d -name ".*") ;; esac',
   '  dirs=()',
@@ -117,6 +117,7 @@ export const GLOB_SCRIPT = [
   // Discover only directories bearing a mandatory literal name, then scan
   // their files while keeping the original search-root header and final matcher.
   'scanTarget=$target',
+  'case ${target##*/} in .git|.hg|.svn|.bzr|.jj|.sl) anchor=;; esac',
   'if [ -n "$anchor" ] && [ -d "$target" ]; then',
   '  dirs=()',
   '  mapfile -d "" -t dirs < <(find "$target" -mindepth 1 \\( "${prune[@]}" \\) -prune -o -type d -name "$anchor" -print0 -prune 2>/dev/null)',
