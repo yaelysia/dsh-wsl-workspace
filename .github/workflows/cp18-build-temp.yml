@@ -29,6 +29,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Materialize exact dependency lock for the fused read's existing language helper
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - run: npm ci
       - run: node ci/install-pinned.mjs
       - run: npm run build
@@ -48,7 +50,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A lib ci/deps/package.json ci/deps/package-lock.json
+          git add -A lib package-lock.json ci/deps/package.json ci/deps/package-lock.json
           if ! git diff --cached --quiet; then
             git commit -m 'build(cp18): synchronize native fused-read library'
             git fetch origin refs/heads/perf/cp18-serial-read-snapshot
