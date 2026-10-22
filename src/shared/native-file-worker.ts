@@ -323,7 +323,21 @@ def dispatch(op, payload):
     try:
         if cancel_requested: fail('FS_ABORTED', 'file operation cancelled before execution')
         req = json.loads(payload)
-        value = run(op, req)
+        if op == 'fs.batch':
+            items = req.get('requests')
+            allowed = ('fs.resolve', 'fs.stat', 'fs.lstat', 'fs.read')
+            if (type(items) is not list or not 2 <= len(items) <= 8 or
+                    any(type(item) is not dict or item.get('op') not in allowed or
+                        type(item.get('payload')) is not dict for item in items)):
+                fail('FS_IO_ERROR', 'invalid read-only file batch')
+            value = []
+            for item in items:
+                if cancel_requested: fail('FS_ABORTED', 'file batch cancelled')
+                reply, _ = dispatch(item['op'], json.dumps(item['payload']))
+                running = True
+                value.append(reply)
+        else:
+            value = run(op, req)
         return {'ok': True, 'committed': committed, 'value': value}, 0
     except Failure as error:
         return {'ok': False, 'committed': committed, 'code': error.code, 'message': error.message}, 1

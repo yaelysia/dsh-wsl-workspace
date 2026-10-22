@@ -1,5 +1,5 @@
 /** Typed consumer of the shared RPC. No host package at runtime; the provider maps its errors. */
-import { decodeRpcBytes, RpcTransportError, WslRpcPool, type RpcTarget } from './rpc-transport.ts'
+import { decodeRpcBytes, RpcTransportError, WslRpcPool, type RpcRun, type RpcTarget } from './rpc-transport.ts'
 import { performance } from 'node:perf_hooks'
 import type { FsErrorCode, FsEditRequest, FsWriteIntent } from '@deepseek-ai/dsh-fs'
 import type { Outcome, RpcMethod } from './rpc-metrics.ts'
@@ -9,7 +9,7 @@ const REPLY_MAX_BYTES = 64 * 1024 * 1024
 const FILE_CODES = new Set<string>(['FS_NOT_FOUND', 'FS_NOT_DIRECTORY', 'FS_NOT_TEXT', 'FS_NOT_REGULAR_FILE',
   'FS_TOO_LARGE', 'FS_PERMISSION_DENIED', 'FS_SANDBOX_DENIED', 'FS_IO_ERROR', 'FS_STALE_VERSION',
   'FS_NOT_OBSERVED', 'FS_AMBIGUOUS_EDIT', 'FS_EDIT_NOT_FOUND', 'FS_ABORTED'])
-export type NativeMethod = Exclude<RpcMethod, 'grep' | 'glob' | 'fs.metadata'>
+export type NativeMethod = Exclude<RpcMethod, 'grep' | 'glob' | 'fs.metadata' | 'fs.batch'>
 export interface NativePolicy { mode: string; roots: string[] }
 export interface NativeInfo { version: string; type: 'file' | 'directory' | 'symlink' | 'other'; size: number }
 export interface NativeEntry extends Partial<NativeInfo> { name: string; path: string; type: NativeInfo['type'] }
@@ -34,19 +34,119 @@ export function decodeNativeText(bytes: Uint8Array): string {
   catch { throw new NativeFileError('FS_NOT_TEXT', 'invalid UTF-8 text') }
 }
 
+/** Batch only independent read-only calls in the same microtask and identical Linux identity. */
+type BatchOp = 'fs.resolve' | 'fs.stat' | 'fs.lstat' | 'fs.read'
+interface QueuedCall {
+  target: RpcTarget
+  op: BatchOp
+  payload: object
+  options: NativeOptions
+  resolve(run: RpcRun): void
+  reject(error: unknown): void
+}
+const abortedRun = (): RpcRun => ({ code: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), aborted: true, signal: null })
+
 /** All mutations are one Linux transaction, not read in Windows and a blind write later. */
 export class NativeFileClient {
   readonly pool: WslRpcPool
+  private readonly queued = new Map<string, QueuedCall[]>()
   constructor(pool: WslRpcPool) { this.pool = pool }
+
+  /** No freshness cache: each entry still physically resolves, stats or reads in Linux. */
+  private submit(target: RpcTarget, op: NativeMethod, payload: object, options: NativeOptions): Promise<RpcRun> {
+    const timeoutMs = options.timeoutMs ?? 30_000
+    if (op !== 'fs.resolve' && op !== 'fs.stat' && op !== 'fs.lstat' && op !== 'fs.read') {
+      return this.pool.run(target, { op, args: [JSON.stringify({ ...payload, replyLimit: REPLY_MAX_BYTES })],
+        timeoutMs, maxBytes: REPLY_MAX_BYTES,
+        ...options.signal === undefined ? {} : { signal: options.signal } })
+    }
+    const key = JSON.stringify([target.wslPath, target.distro, target.username ?? null, target.linuxCwd, op, timeoutMs])
+    return new Promise<RpcRun>((resolve, reject) => {
+      const item: QueuedCall = { target, op, payload, options, resolve, reject }
+      const pending = this.queued.get(key)
+      if (pending) { pending.push(item); return }
+      this.queued.set(key, [item])
+      queueMicrotask(() => {
+        const entries = this.queued.get(key)!
+        this.queued.delete(key)
+        const live = entries.filter(entry => {
+          if (!entry.options.signal?.aborted) return true
+          entry.resolve(abortedRun())
+          return false
+        })
+        const limit = op === 'fs.read' ? 2 : 8 // Worst-case two 16 MiB base64 reads fit in a 64 MiB receipt.
+        for (let i = 0; i < live.length; i += limit) void this.sendGroup(live.slice(i, i + limit))
+      })
+    })
+  }
+
+  private async sendGroup(entries: QueuedCall[]): Promise<void> {
+    const first = entries[0]!
+    if (entries.length === 1) {
+      try {
+        first.resolve(await this.pool.run(first.target, {
+          op: first.op, args: [JSON.stringify({ ...first.payload, replyLimit: REPLY_MAX_BYTES })],
+          timeoutMs: first.options.timeoutMs ?? 30_000, maxBytes: REPLY_MAX_BYTES,
+          ...first.options.signal === undefined ? {} : { signal: first.options.signal },
+        }))
+      } catch (error) { first.reject(error) }
+      return
+    }
+    // One cancelled read must not cancel another session's independent request.
+    const controller = new AbortController()
+    const pending = new Set(entries)
+    const cleanup = entries.map(entry => {
+      const onAbort = () => {
+        if (!pending.delete(entry)) return
+        entry.resolve(abortedRun())
+        if (pending.size === 0) controller.abort()
+      }
+      entry.options.signal?.addEventListener('abort', onAbort, { once: true })
+      if (entry.options.signal?.aborted) onAbort()
+      return () => entry.options.signal?.removeEventListener('abort', onAbort)
+    })
+    try {
+      if (pending.size === 0) return
+      const run = await this.pool.run(first.target, {
+        op: 'fs.batch',
+        args: [JSON.stringify({ requests: entries.map(entry => ({
+          op: entry.op, payload: { ...entry.payload, replyLimit: REPLY_MAX_BYTES },
+        })) })],
+        timeoutMs: first.options.timeoutMs ?? 30_000, maxBytes: REPLY_MAX_BYTES,
+        signal: controller.signal,
+      })
+      if (run.aborted) {
+        for (const entry of pending) entry.resolve(run)
+        return
+      }
+      if (run.code !== 0 || run.stdout.length > REPLY_MAX_BYTES) invalid('invalid batched file response')
+      let outer: { ok?: boolean; committed?: boolean; value?: unknown }
+      try { outer = JSON.parse(run.stdout.toString('utf8')) }
+      catch { invalid('invalid batched file response') }
+      if (!outer || outer.ok !== true || outer.committed !== false ||
+        !Array.isArray(outer.value) || outer.value.length !== entries.length ||
+        outer.value.some(row => !row || typeof row.ok !== 'boolean' || row.committed !== false)) {
+        invalid('invalid batched file receipt')
+      }
+      entries.forEach((entry, i) => {
+        if (pending.has(entry)) {
+          const reply = (outer.value as { ok: boolean }[])[i]!
+          entry.resolve({ ...run, code: reply.ok ? 0 : 1, stdout: Buffer.from(JSON.stringify(reply)) })
+        }
+      })
+    } catch (error) {
+      for (const entry of pending) entry.reject(error)
+    } finally {
+      for (const stop of cleanup) stop()
+    }
+  }
 
   private async call(target: RpcTarget, op: NativeMethod, payload: object, options: NativeOptions = {}): Promise<unknown> {
     const started = performance.now()
     let outcome: Outcome = 'error'
     const mutating = op === 'fs.write' || op === 'fs.edit'
     try {
-      const run = await this.pool.run(target, { op, args: [JSON.stringify({ ...payload, replyLimit: REPLY_MAX_BYTES })],
-        timeoutMs: options.timeoutMs ?? 30_000, maxBytes: REPLY_MAX_BYTES,
-        ...options.signal === undefined ? {} : { signal: options.signal } })
+      const run = await this.submit(target, op, payload, options)
       if (run.aborted) throw new NativeFileError('FS_ABORTED', 'file operation cancelled before execution')
       if (run.stdout.length > REPLY_MAX_BYTES) throw new NativeFileError(mutating ? 'FS_IO_ERROR' : 'FS_TOO_LARGE',
         mutating ? 'file mutation result unknown; re-read before retrying' : 'file response exceeds its byte limit')

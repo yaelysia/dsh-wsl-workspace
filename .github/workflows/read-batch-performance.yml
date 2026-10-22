@@ -1,0 +1,87 @@
+name: read-batch-performance
+on:
+  pull_request:
+    paths:
+      - 'src/shared/native-files.ts'
+      - 'src/shared/native-file-worker.ts'
+      - 'src/shared/rpc-worker.ts'
+      - 'src/shared/rpc-metrics.ts'
+      - 'scripts/benchmark-read-batching.mjs'
+      - 'tests/native-files.test.mjs'
+      - 'lib/**'
+      - 'package.json'
+      - '.github/workflows/read-batch-performance.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  paired-read:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            wsl: 0
+          - os: windows-latest
+            wsl: 2
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    env:
+      WSL_COMPAT_DISTRO: Ubuntu-24.04
+      MSYS_NO_PATHCONV: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: node ci/install-pinned.mjs
+      - uses: Vampire/setup-wsl@v3
+        if: matrix.wsl == 2
+        with:
+          distribution: Ubuntu-24.04
+          additional-packages: python3
+      - name: Verify Windows really uses WSL2
+        if: matrix.wsl == 2
+        run: |
+          mkdir -p logs
+          current=$(wsl.exe -l -v | tr -d '\0\r' | sed 's/[[:space:]]*$//' | grep -F "$WSL_COMPAT_DISTRO" | grep -oE '[12]$' || true)
+          if [ "$current" != 2 ]; then wsl.exe --set-version "$WSL_COMPAT_DISTRO" 2; fi
+          wsl.exe -l -v | tr -d '\0\r' | tee logs/wsl-version.txt
+          grep -F "$WSL_COMPAT_DISTRO" logs/wsl-version.txt | grep -E '[[:space:]]2$'
+      - name: Actual native read contracts on both planes
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          DSH_WSL_TEST_PLANE=src npm run test:native-files > logs/contract-src.log 2>&1
+          DSH_WSL_TEST_PLANE=lib npm run test:native-files > logs/contract-lib.log 2>&1
+          tail -8 logs/contract-src.log
+          tail -8 logs/contract-lib.log
+      - name: Paired read chain against merged CP15
+        run: |
+          git worktree add --detach .cp16-baseline 2e7e279e0a62dcaa86452c090d1313c7b2aa8342
+          node -e "require('node:fs').symlinkSync(require('node:path').resolve('node_modules'), '.cp16-baseline/node_modules', process.platform === 'win32' ? 'junction' : 'dir')"
+          npm run bench:read-batch -- --baseline .cp16-baseline --iterations 20 --output logs/read-batch.json > logs/read-batch.log 2>&1
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs'
+          const data=JSON.parse(readFileSync('logs/read-batch.json','utf8'))
+          console.log(JSON.stringify({platform:data.platform,baseline:data.baselineSha,rows:data.rows.map(row=>({
+            scenario:row.scenario,beforeP50Ms:row.before.wall.p50Ms,afterP50Ms:row.after.wall.p50Ms,
+            beforeP95Ms:row.before.wall.p95Ms,afterP95Ms:row.after.wall.p95Ms,
+            beforeCalls:row.before.calls[0],afterCalls:row.after.calls[0],
+            callReduction:row.medianCallReduction
+          }))},null,2))
+          NODE
+          git worktree remove --force .cp16-baseline
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: read-batch-${{ matrix.os }}-wsl${{ matrix.wsl }}
+          path: logs/
+          retention-days: 14
