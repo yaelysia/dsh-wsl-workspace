@@ -100,7 +100,6 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/dsh-util-code-language": "0.1.7-rc.2",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {
