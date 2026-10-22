@@ -168,3 +168,26 @@ export function globDirectoryPrefix(pattern: string): string | undefined {
   }
   return prefix.length ? prefix.join('/') : undefined
 }
+/**
+ * Optional grep optimization: only a literal directory common to EVERY
+ * path-shaped, positive brace alternative may constrain the Linux walk.
+ * Patterns without a common provable prefix use the original full traversal.
+ * Never turn hidden/node_modules directories into explicitly traversed roots.
+ */
+export function grepDirectoryPrefix(globs: readonly string[]): string | undefined {
+  if (globs.length === 0 || globs.some(pattern => !pattern.includes('/'))) return undefined
+  const first = globDirectoryPrefix(globs[0]!)
+  if (!first) return undefined
+  let common = first.split('/')
+  for (const glob of globs.slice(1)) {
+    const other = globDirectoryPrefix(glob)
+    if (!other) return undefined
+    const segments = other.split('/')
+    let length = 0
+    while (length < common.length && length < segments.length && common[length] === segments[length]) length++
+    common = common.slice(0, length)
+    if (common.length === 0) return undefined
+  }
+  if (common.some(part => part === 'node_modules' || part.startsWith('.'))) return undefined
+  return common.join('/')
+}

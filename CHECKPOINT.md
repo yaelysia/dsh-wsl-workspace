@@ -1,5 +1,13 @@
 # Windows DSH → WSL continuation checkpoint
 
+## CP15: validated grep prefix pruning, read profiling, and merge-ready delivery
+
+- Based on merged CP14 main `59f70928687480bd46fc5c77c46727f2c9daa2f3`. [PR #12](https://github.com/yaelysia/dsh-wsl-workspace/pull/12) packages optimized grep with matching `lib/`; runtime artifact `c1b190bb08c7916d5946183b8ffcacae222bd9e0`; **7/7 completed/success CI workflows** at `452c24fa06820086ef699cdac182ecdb1ae828fc`. This final checkpoint commit is documentation + temporary workflow cleanup only.
+- Exact Windows→WSL2 measured registered-tool grep P50: `139.720 → 11.816 ms` (11.8× faster) for fixed-prefix includes with 16,000 irrelevant same-extension files; no-prefix control `139.503 → 137.719 ms`, unchanged. Matching 120-file result sets are identical. Linux shows similar targeted wins. No all-purpose DSH speedup is claimed.
+- Read profiling shows **72 RPCs** for 24×4KiB files using separate resolve/stat/read; Windows P50 serial/eight-way `89.599/81.782 ms`. Pre-resolved 4MiB `readText/streamText` P50 `154.711/154.057 ms` despite 1 vs 18 native RPC calls. These **measurements do not modify read behavior** or justify a binary/stream protocol replacement.
+- [CP15 measurements, methods, boundaries, artifacts and regression status](docs/performance-cp15.md). Existing owner pool, real Loader, case isolation, physical-path authorization, guarded mutation, cancellation acknowledgement, no-replay, byte caps and fallback rules remain. No host hot reload or Skills changes.
+- The current `main` and final install SHA must be checked after merge; a green PR alone never means deployed. Any successor should first establish its own real Desktop acceptance if relevant.
+
 ## CP14: validated traversal reduction
 
 Active branch: `perf/cp14-prune-enumeration`; [PR #11](https://github.com/yaelysia/dsh-wsl-workspace/pull/11), stacked on CP13 [PR #10](https://github.com/yaelysia/dsh-wsl-workspace/pull/10). Base is `f7c051a05c279bec181a2ef0257d6b4240fc9ad4`. Runtime and matching lib were published at **`f01c7f415374cbff467ecb6456e8685da58057f8`**. The complete tested head is **`f0b0921ed537baf71511e651233637f650867ee8`**; its PR test merge was `2de4da04f614b5f6cc507a36d09012626b388705`. This evidence update changes only Markdown, not that runtime or lib. Check live refs before continuing; none of these facts establishes a main merge or new Desktop GUI acceptance.
