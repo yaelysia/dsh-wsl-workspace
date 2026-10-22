@@ -1,0 +1,57 @@
+name: cp18-build-temp
+on:
+  push:
+    branches: ['perf/cp18-serial-read-snapshot']
+    paths:
+      - 'src/**'
+      - 'tests/wsl-read-snapshot.test.mjs'
+      - 'tests/host-materialize.mjs'
+      - 'scripts/benchmark-read-snapshot.mjs'
+      - 'scripts/compatibility/plane.mjs'
+      - 'tsdown.config.ts'
+      - 'package.json'
+      - '.github/workflows/cp18-build-temp.yml'
+permissions:
+  contents: write
+jobs:
+  build-and-publish:
+    if: github.repository == 'yaelysia/dsh-wsl-workspace'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: node ci/install-pinned.mjs
+      - run: npm run build
+      - name: Source and built host read parity and write safety
+        run: |
+          set -euo pipefail
+          for plane in src lib; do
+            export DSH_WSL_TEST_PLANE=$plane
+            npm run test:read-snapshot
+            npm run test:native-files
+            npm run test:rpc-loader
+          done
+          npm run test:unit
+          node tests/host-materialize.mjs
+          npm run typecheck:gate
+      - name: Publish committed lib from tested src
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A lib
+          if ! git diff --cached --quiet; then
+            git commit -m 'build(cp18): synchronize native fused-read library'
+            git fetch origin refs/heads/perf/cp18-serial-read-snapshot
+            if ! git diff --quiet HEAD..FETCH_HEAD -- src package.json tsdown.config.ts; then
+              echo 'Source changed during build; refusing stale library'
+              exit 1
+            fi
+            git rebase FETCH_HEAD
+            git push origin HEAD:refs/heads/perf/cp18-serial-read-snapshot
+          fi
