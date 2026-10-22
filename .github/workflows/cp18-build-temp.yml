@@ -10,6 +10,7 @@ on:
       - 'scripts/compatibility/plane.mjs'
       - 'tsdown.config.ts'
       - 'package.json'
+      - 'ci/pinned-deps.json'
       - '.github/workflows/cp18-build-temp.yml'
 permissions:
   contents: write
@@ -44,11 +45,11 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A lib
+          git add -A lib ci/deps/package.json ci/deps/package-lock.json
           if ! git diff --cached --quiet; then
             git commit -m 'build(cp18): synchronize native fused-read library'
             git fetch origin refs/heads/perf/cp18-serial-read-snapshot
-            if ! git diff --quiet HEAD..FETCH_HEAD -- src package.json tsdown.config.ts; then
+            if ! git diff --quiet HEAD..FETCH_HEAD -- src package.json tsdown.config.ts ci/pinned-deps.json; then
               echo 'Source changed during build; refusing stale library'
               exit 1
             fi
