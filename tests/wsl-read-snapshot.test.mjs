@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { apply as hostTool } from '@deepseek-ai/dsh-tool-fs'
 import { makeFixture, writeRaw, python, codeIs } from './support/native-fixture.mjs'
 import { load } from '../scripts/compatibility/plane.mjs'
 
@@ -20,10 +19,19 @@ function mount(fs, root, apply, settings) {
   apply(context, settings)
   return { tool: registry.get('read'), observations }
 }
-function hostSettings(overrides = {}) {
-  return { read: true, readImage: false, write: false, edit: false,
-    readLimit: 2000, readMaxLineLength: 2000, readMaxBytes: 50 * 1024,
-    readStreamMinSize: 10 * 1024 * 1024, ...overrides }
+/** Test-only adapter performing the host read tool's original fs sequence. */
+function legacyFs(fs) {
+  return {
+    async readSnapshot(path,options) {
+      const target=await fs.resolve(path,options)
+      const info=await fs.stat(target,options.signal)
+      const text=info?.type==='file' && info.size!==undefined && info.size<options.streamMinSize
+        ? await fs.readText(target,options.signal) : undefined
+      return {target,info,...text===undefined?{}:{text}}
+    },
+    streamText:fs.streamText.bind(fs),
+    processPath:fs.processPath.bind(fs),
+  }
 }
 function codes(error) { return error?.code }
 const execute = async (tool, args, fs, operations) => {
@@ -32,11 +40,11 @@ const execute = async (tool, args, fs, operations) => {
     signal: new AbortController().signal })
 }
 
-test('native WSL read fuses serial resolve/stat/text into exactly one RPC', async t => {
+test('native WSL read retains old read-tool result when three RPCs collapse to one', async t => {
   const f = await makeFixture()
   t.after(() => f.cleanup())
   await writeRaw(f.root+'/single.ts', Buffer.from('first\r\nsecond\n','utf8'))
-  const old = mount(f.fs, f.cwd, hostTool, hostSettings())
+  const old = mount(legacyFs(f.fs), f.cwd, optimized.apply, {})
   const next = mount(f.fs, f.cwd, optimized.apply, {})
   const calls = []
   const pool = f.fs.wslRpcPool, run = pool.run.bind(pool)
@@ -57,14 +65,19 @@ test('native WSL read fuses serial resolve/stat/text into exactly one RPC', asyn
   const shown={isError:false,meta:metaOld,content:old.tool.output.render(args,before)}
   assert.deepEqual(next.tool.presentResult(args,shown),old.tool.presentResult(args,shown))
   assert.deepEqual(next.tool.presentCall(args),old.tool.presentCall(args))
+  assert.deepEqual(after, {path: f.root+'/single.ts',offset:1,totalLines:2,
+    lines:[{number:1,text:'first'},{number:2,text:'second'}]})
+  assert.deepEqual(next.tool.output.render(args,after),[{type:'text',text:
+    '<path>'+f.root+'/single.ts</path>\n<type>file</type>\n<content>\n'
+    +'1: first\n2: second\n\n(End of file - total 2 lines)\n</content>'}])
   assert.equal(pool.diagnostics().pending,0)
 })
 
-test('snapshot matches host read windows, missing/type/text errors and stream fallback', async t => {
+test('snapshot preserves windows, missing/type/text errors and stream fallback', async t => {
   const f = await makeFixture()
   t.after(() => f.cleanup())
   const caps = { readLimit: 50, readMaxLineLength: 9, readMaxBytes: 32, readStreamMinSize: 128 }
-  const old = mount(f.fs, f.cwd, hostTool, hostSettings(caps))
+  const old = mount(legacyFs(f.fs), f.cwd, optimized.apply, caps)
   const next = mount(f.fs, f.cwd, optimized.apply, caps)
   await python('import os,sys;os.mkdir(sys.argv[1])', [f.root+'/directory'])
   const fixtures = [
