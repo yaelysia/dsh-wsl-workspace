@@ -35,7 +35,7 @@ const execute = async (tool, args, fs, operations) => {
 test('native WSL read fuses serial resolve/stat/text into exactly one RPC', async t => {
   const f = await makeFixture()
   t.after(() => f.cleanup())
-  await writeRaw(f.root+'/single.ts', Buffer.from('first\\r\\nsecond\\n','utf8'))
+  await writeRaw(f.root+'/single.ts', Buffer.from('first\r\nsecond\n','utf8'))
   const old = mount(f.fs, f.cwd, hostTool, hostSettings())
   const next = mount(f.fs, f.cwd, optimized.apply, {})
   const calls = []
@@ -68,10 +68,10 @@ test('snapshot matches host read windows, missing/type/text errors and stream fa
   const next = mount(f.fs, f.cwd, optimized.apply, caps)
   await python('import os,sys;os.mkdir(sys.argv[1])', [f.root+'/directory'])
   const fixtures = [
-    ['normal.ts', Buffer.from('a\\n1234567890123\\nthird\\n')],
-    ['bom.txt', Buffer.from('\\ufefffirst\\r\\nsecond\\n')],
-    ['unicode.ts', Buffer.from('你好🙂\\nline\\r\\n')],
-    ['large.ts', Buffer.from('line\\n'.repeat(160))],
+    ['normal.ts', Buffer.from('a\n1234567890123\nthird\n')],
+    ['bom.txt', Buffer.from('\ufefffirst\r\nsecond\n')],
+    ['unicode.ts', Buffer.from('你好🙂\nline\r\n')],
+    ['large.ts', Buffer.from('line\n'.repeat(160))],
     ['invalid.txt', Buffer.from([0x61,0xff])],
     ['binary.txt', Buffer.from([0x41,0,0x42])],
     ['empty.txt', Buffer.alloc(0)],
@@ -107,12 +107,12 @@ test('snapshot matches host read windows, missing/type/text errors and stream fa
 test('snapshot does not replace the fresh read observation needed by guarded writes', async t => {
   const f = await makeFixture()
   t.after(() => f.cleanup())
-  await writeRaw(f.root+'/edit.ts',Buffer.from('before\\n'))
+  await writeRaw(f.root+'/edit.ts',Buffer.from('before\n'))
   const result = await f.fs.readSnapshot('edit.ts',{cwd:f.cwd,streamMinSize:1024})
-  assert.equal(result.text,'before\\n')
+  assert.equal(result.text,'before\n')
   assert.equal(result.info.type,'file')
-  await writeRaw(f.root+'/edit.ts',Buffer.from('changed\\n'))
+  await writeRaw(f.root+'/edit.ts',Buffer.from('changed\n'))
   await assert.rejects(f.fs.writeText(result.target,'overwrite',
     {kind:'replaceIfVersion',version:result.info.version}),codeIs('FS_STALE_VERSION'))
-  assert.equal(await f.fs.readText(result.target),'changed\\n')
+  assert.equal(await f.fs.readText(result.target),'changed\n')
 })
