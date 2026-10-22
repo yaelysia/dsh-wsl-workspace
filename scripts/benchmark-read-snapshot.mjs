@@ -1,10 +1,9 @@
-// Paired REAL registered read tool, old host chain vs one-RPC WSL snapshot.
+// Paired registered WSL read tool using old host provider sequence vs one-RPC snapshot.
 // Same owner, same files, alternating trials and exact returned-object parity.
 import assert from 'node:assert/strict'
 import { performance } from 'node:perf_hooks'
 import { spawnSync } from 'node:child_process'
 import { writeFile } from 'node:fs/promises'
-import { apply as hostRead } from '@deepseek-ai/dsh-tool-fs'
 import { makeFixture, python, windows, distro } from '../tests/support/native-fixture.mjs'
 import { load } from './compatibility/plane.mjs'
 
@@ -16,21 +15,28 @@ assert.equal(ref.status,0)
 const fixture=await makeFixture()
 const fs=fixture.fs, fcount=24, fsize=4096
 const optimized=(await load('wsl-read-tool')).apply
-const register=(apply,config)=>{
+const register=(apply,config,provider)=>{
   let tool
   const tools={register(value){if(value.name==='read')tool=value},get(){return tool}}
-  const ctx={fs,tools,get(k){return this[k]},
+  const ctx={fs:provider,tools,get(k){return this[k]},
     workingDirectory:{async ensure(){return fixture.cwd}},
     systemPrompt:{section(){},getSectionOrder(){return 1}},emit(){}}
   apply(ctx,config)
   assert.ok(tool)
   return tool
 }
-const old=register(hostRead,{
-  read:true,readImage:false,write:false,edit:false,readLimit:2000,
-  readMaxLineLength:2000,readMaxBytes:51200,readStreamMinSize:10485760,
-})
-const next=register(optimized,{})
+const legacyFs = {
+  async readSnapshot(path,options){
+    const target=await fs.resolve(path,options)
+    const info=await fs.stat(target,options.signal)
+    const text=info?.type==='file' && info.size!==undefined && info.size<options.streamMinSize
+      ? await fs.readText(target,options.signal):undefined
+    return {target,info,...(text===undefined?{}:{text})}
+  },
+  streamText:fs.streamText.bind(fs),processPath:fs.processPath.bind(fs),
+}
+const before=register(optimized,{},legacyFs)
+const next=register(optimized,{},fs)
 const pool=fs.wslRpcPool,original=pool.run.bind(pool),records={}
 let measuring
 pool.run=(where,request)=>{
@@ -56,7 +62,7 @@ for i in range(24):
       const now=performance.now()
       for(let index=0;index<fcount;index++){
         const args={file_path:'small/'+index+'.txt'}
-        const answer=await (name==='old'?old:next).execute(args,exec)
+        const answer=await (name==='old'?before:next).execute(args,exec)
         assert.equal(answer.lines.length,1)
         assert.equal(answer.lines[0].text,expected[index])
         assert.equal(answer.totalLines,1)
