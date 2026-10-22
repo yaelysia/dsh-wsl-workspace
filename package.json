@@ -58,7 +58,8 @@
     "test:grep-prune": "node --experimental-strip-types --test tests/grep-prune.test.mjs",
     "bench:grep-prune": "node --experimental-strip-types scripts/benchmark-grep-pruning.mjs",
     "profile:reads": "node --experimental-strip-types scripts/profile-read-workloads.mjs",
-    "bench:read-batch": "node --experimental-strip-types scripts/benchmark-read-batching.mjs"
+    "bench:read-batch": "node --experimental-strip-types scripts/benchmark-read-batching.mjs",
+    "bench:wildcard-anchor": "node --experimental-strip-types scripts/benchmark-wildcard-anchor.mjs"
   },
   "exports": {
     ".": "./lib/index.js",
