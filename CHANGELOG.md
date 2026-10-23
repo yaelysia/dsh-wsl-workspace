@@ -2,6 +2,11 @@
 
 All notable changes to `dsh-wsl-workspace`, newest first. Back to the [README](README.md); the Chinese record is [CHANGELOG.zh.md](CHANGELOG.zh.md).
 
+## 0.7.9 — 2026-10-23
+- Publish this independently maintained fork as `dsh-wsl-workspace-enhanced`, distinct from the upstream npm package.
+- Align the DSH bundle package reference, browser module ID and npm help link with the enhanced package.
+- Document npm installation and pinned Git releases in the English and Chinese guides.
+
 ## 0.7.8 — 2026-10-23
 - **P3 / CP19: adaptive large-file reads.** For highly redundant read-only data, the WSL file
   backend uses bounded compression rather than transferring two large Base64 layers.

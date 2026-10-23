@@ -1,7 +1,7 @@
 {
-  "name": "dsh-wsl-workspace",
+  "name": "dsh-wsl-workspace-enhanced",
   "description": "Keep DSH on Windows while using local WSL workspaces, persistent search and guarded native file I/O. Native RPC uses Linux Python 3.8+; UNC compatibility remains available.",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "type": "module",
   "packageManager": "npm@11.19.0",
   "repository": {
@@ -119,7 +119,8 @@
     "wsl",
     "workspace",
     "plugin",
-    "windows"
+    "windows",
+    "dsh-plugin"
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",

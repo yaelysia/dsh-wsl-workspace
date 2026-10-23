@@ -4,4 +4,4 @@
 # preset on boot. Install with `dsh plugin --profile <name> add <path-or-git-url>`.
 - insert:
     - id: wsl-workspace
-      name: 'dsh-wsl-workspace'
+      name: 'dsh-wsl-workspace-enhanced'

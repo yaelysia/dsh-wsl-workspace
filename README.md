@@ -1,4 +1,4 @@
-# DSH WSL Workspace
+# DSH WSL Workspace Enhanced
 
 **Run DeepSeek Harness on Windows. Work on your code in WSL.**
 
@@ -46,8 +46,16 @@ only when building or testing this repository as a developer.
 
 ## Install
 
+**Pre-release:** use the npm `next` tag. The existing behaviour matrix still has three unresolved items; see [release behaviour matrix](docs/release-behaviour-matrix.zh.md).
+
 1. Open the **Plugins** page in Windows DSH and select the option to add a third-party plugin.
-2. Install this repository's Git source:
+2. Enter the npm package name (recommended):
+
+   ```text
+   dsh-wsl-workspace-enhanced@next
+   ```
+
+   Or install this repository's Git source:
 
    ```text
    git+https://github.com/yaelysia/dsh-wsl-workspace.git#main
@@ -55,11 +63,17 @@ only when building or testing this repository as a developer.
 
 3. Enable the plugin, then **fully exit and restart DSH** (including its host process).
 
+CLI installation: `dsh plugin --profile web add dsh-wsl-workspace-enhanced@next`.
+For a pinned Git release, replace `#main` with `#v0.7.9`.
+
+[GitHub Releases](https://github.com/yaelysia/dsh-wsl-workspace/releases) ·
+[npm](https://www.npmjs.com/package/dsh-wsl-workspace-enhanced)
+
 The upstream npm package named `dsh-wsl-workspace` is **not** this fork. Do not enable
 both copies under the same plugin identity. The installed plugin version is declared in [`package.json`](package.json). For Git installations,
 **also check the Git source and resolved commit SHA** to verify which code was installed.
 
-**Updating:** Use the same Git source. If DSH's plugin updater cannot identify an
+**Updating:** Update `dsh-wsl-workspace-enhanced@next` through the plugin manager. For Git installations, use the same Git source. If DSH's plugin updater cannot identify an
 already-installed Git package, record your settings, remove the old copy through the
 plugin manager and install this source again. A full restart is the reliable way to
 activate changes; live profile reload is controlled by DSH itself. If an update reports

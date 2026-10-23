@@ -1,4 +1,4 @@
-# DSH WSL Workspace
+# DSH WSL Workspace Enhanced
 
 **DSH 运行在 Windows，代码和工具链留在 WSL。**
 
@@ -45,8 +45,16 @@ wsl -d Ubuntu --exec python3 --version
 
 ## 安装与更新
 
+**预发布版：**npm 使用 `next` 标签。现有行为矩阵仍有 3 项未定，详见[发布行为矩阵](docs/release-behaviour-matrix.zh.md)。
+
 1. 在 Windows DSH 打开**插件**页面，选择**添加／安装第三方插件**。
-2. 填写此增强仓库的 Git 来源：
+2. 填写增强版 npm 包名（推荐）：
+
+   ```text
+   dsh-wsl-workspace-enhanced@next
+   ```
+
+   也可以填写此增强仓库的 Git 来源：
 
    ```text
    git+https://github.com/yaelysia/dsh-wsl-workspace.git#main
@@ -54,11 +62,17 @@ wsl -d Ubuntu --exec python3 --version
 
 3. 启用插件，**完整退出并重新启动 DSH**，包括其宿主进程。
 
+命令行安装：`dsh plugin --profile web add dsh-wsl-workspace-enhanced@next`。
+若需固定 Git 发布版本，将 `#main` 替换为 `#v0.7.9`。
+
+[GitHub Releases](https://github.com/yaelysia/dsh-wsl-workspace/releases) ·
+[npm 包](https://www.npmjs.com/package/dsh-wsl-workspace-enhanced)
+
 **不要安装上游同名 npm 包来替代增强版。** 两者插件标识相同，不应同时启用。
 当前插件版本以 [`package.json`](package.json) 为准。通过 Git 安装时，还应核对**Git 来源与
 实际解析 SHA**，确认运行的确实是预期版本。
 
-**更新方式：**继续使用同一个 Git 来源。如果 DSH 更新器无法识别已有的 Git
+**更新方式：**在插件管理页面更新 `dsh-wsl-workspace-enhanced@next`；Git 安装则继续使用同一个 Git 来源。如果 DSH 更新器无法识别已有的 Git
 安装，可以先记录插件配置，从插件管理页面卸载旧副本，再重新安装这个地址。
 宿主热重载由 DSH 官方负责；安装／更新后完整重启最稳妥。若安装界面明确报错，
 先核对实际安装提交，不要把“文件下载过”当作更新成功。

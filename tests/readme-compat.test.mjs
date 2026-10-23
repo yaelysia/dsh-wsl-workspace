@@ -21,6 +21,13 @@ const hasReadmes = fs.existsSync(new URL('../README.md', import.meta.url))
   && fs.existsSync(new URL('../README.zh.md', import.meta.url));
 const skipWithoutReadmes = hasReadmes ? false : 'this copy of the plugin carries no READMEs'
 
+test('the published package name matches its host and browser installation entries', () => {
+  assert.ok(read('cordis.patch.yml').includes(`name: '${manifest.name}'`));
+  assert.ok(read('tsdown.config.ts').includes(`id: "${manifest.name}"`));
+  assert.ok(read('src/client/help.tsx').includes(`https://www.npmjs.com/package/${manifest.name}"`));
+  assert.ok(read('lib/client.js').includes(`id: "${manifest.name}"`));
+});
+
 /** The distinct backticked version tokens of a README's compatibility section. */
 function readmeReleases(text, heading) {
   const start = text.indexOf(`\n${heading}\n`);

@@ -87,7 +87,7 @@ export function WslHelp({ t, description }: WslHelpProps): React.ReactElement {
         </ul>
       </Section>
       <div className="dww-help-footer">
-        <a className="dww-help-link" href="https://www.npmjs.com/package/dsh-wsl-workspace" target="_blank" rel="noreferrer">
+        <a className="dww-help-link" href="https://www.npmjs.com/package/dsh-wsl-workspace-enhanced" target="_blank" rel="noreferrer">
           {t('help.footer.npm')}
         </a>
         <a className="dww-help-link" href="https://github.com/yaelysia/dsh-wsl-workspace" target="_blank" rel="noreferrer">
