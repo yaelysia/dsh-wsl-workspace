@@ -1,0 +1,58 @@
+name: cp19-build-temp
+on:
+  push:
+    branches: ['perf/cp19-adaptive-read-payload']
+    paths:
+      - 'src/shared/native-file-worker.ts'
+      - 'src/shared/native-files.ts'
+      - 'tests/native-read-compression.test.mjs'
+      - 'scripts/benchmark-large-read-transport.mjs'
+      - 'package.json'
+      - '.github/workflows/cp19-build-temp.yml'
+permissions:
+  contents: write
+concurrency:
+  group: cp19-build-temp-${ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-and-publish:
+    if: github.repository == 'yaelysia/dsh-wsl-workspace'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: node ci/install-pinned.mjs
+      - run: npm run build
+      - name: Source and shipped lib decode/protocol/mutation contracts
+        run: |
+          set -euo pipefail
+          for plane in src lib; do
+            export DSH_WSL_TEST_PLANE=$plane
+            npm run test:read-transport
+            npm run test:native-files
+            npm run test:read-snapshot
+            npm run test:rpc-loader
+          done
+          npm run test:unit
+          npm run typecheck:gate
+      - name: Commit verified built artifacts without stale source overwrite
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A lib
+          if ! git diff --cached --quiet; then
+            git commit -m 'build(cp19): synchronize tested adaptive native read library'
+            git fetch origin refs/heads/perf/cp19-adaptive-read-payload
+            if ! git diff --quiet HEAD..FETCH_HEAD -- src package.json scripts tests; then
+              echo 'Source changed during build; refusing stale lib publication'
+              exit 1
+            fi
+            git rebase FETCH_HEAD
+            git push origin HEAD:refs/heads/perf/cp19-adaptive-read-payload
+          fi
