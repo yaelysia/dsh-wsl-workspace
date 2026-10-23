@@ -1,6 +1,6 @@
 /** Linux file transactions. Mirrors the pinned dsh-fs-local text/guard contract (MIT; see NOTICE). */
 export const NATIVE_FILE_PROGRAM = String.raw`
-import base64, errno, fcntl, json, os, signal, stat, sys, uuid
+import base64, errno, fcntl, json, os, signal, stat, sys, uuid, zlib
 from collections import deque
 
 MAX_CONTENT = 16 * 1024 * 1024
@@ -133,6 +133,20 @@ def read_bytes(path, cap, offset=None, expected=None):
             fail('FS_STALE_VERSION', 'file changed during read')
         return data  # Consumers accept the buffer; avoid a second full-file allocation.
     finally: os.close(fd)
+
+# Only compress read-only content that can pay back the CPU used to encode it.
+# The 16 KiB sample prevents large incompressible payloads paying a full zlib
+# pass; a final size check preserves the raw path for false positives.
+# Bounded decode happens in NativeFileClient, never inside the RPC framing.
+def encoded_read(data):
+    if len(data) >= 65536:
+        sample = memoryview(data)[:16384]
+        if len(zlib.compress(sample, 1)) * 10 < len(sample) * 9:
+            compressed = zlib.compress(data, 1)
+            if len(compressed) + 64 < len(data):
+                return {'dataZ': base64.b64encode(compressed).decode('ascii'),
+                        'rawBytes': len(data)}
+    return {'data': base64.b64encode(data).decode('ascii')}
 
 def text(raw, all_binary=False):
     if b'\0' in (raw if all_binary else raw[:8192]): fail('FS_NOT_TEXT', 'binary file')
@@ -283,11 +297,11 @@ def run(op, req):
             return {'path': path, 'info': None, 'data': None}
         state = probe(path)
         metadata = None if state is None else info(state)
-        data = None
+        data = {'data': None}
         if (state is not None and stat.S_ISREG(state.st_mode)
                 and state.st_size < threshold):
-            data = base64.b64encode(read_bytes(path, MAX_CONTENT)).decode('ascii')
-        return {'path': path, 'info': metadata, 'data': data}
+            data = encoded_read(read_bytes(path, MAX_CONTENT))
+        return {'path': path, 'info': metadata, **data}
     if op == 'fs.resolve': return {'path': canonical(path)}
     if op == 'fs.lstat':
         parent, name = path.rsplit('/', 1)
@@ -304,7 +318,7 @@ def run(op, req):
         offset = req.get('offset') if op == 'fs.range' else None
         if offset is not None and (type(offset) is not int or offset < 0): fail('FS_IO_ERROR', 'invalid range offset')
         data = read_bytes(path, cap, offset, req.get('version'))
-        return {'data': base64.b64encode(data).decode('ascii')}
+        return encoded_read(data)
     if op == 'fs.list':
         s = probe(path)
         if s is None: fail('FS_NOT_FOUND', 'directory not found')
