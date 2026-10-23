@@ -210,7 +210,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       }
       const window = native === undefined
         ? await windowOf(info.size === undefined || info.size >= caps.readStreamMinSize
-          ? await fs.streamText(target, exec.signal) : [snapshot.text!], {
+          ? await fs.streamText(target, exec.signal) : [(snapshot as ReadInfo).text!], {
             offset: input.offset, limit: input.limit,
             maxLineLength: caps.readMaxLineLength, maxBytes: caps.readMaxBytes,
           }, target.displayPath)
