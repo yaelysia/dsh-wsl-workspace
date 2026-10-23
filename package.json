@@ -61,7 +61,9 @@
     "bench:read-batch": "node --experimental-strip-types scripts/benchmark-read-batching.mjs",
     "bench:wildcard-anchor": "node --experimental-strip-types scripts/benchmark-wildcard-anchor.mjs",
     "test:read-snapshot": "node --experimental-strip-types --test tests/wsl-read-snapshot.test.mjs",
-    "bench:read-snapshot": "node --experimental-strip-types scripts/benchmark-read-snapshot.mjs"
+    "bench:read-snapshot": "node --experimental-strip-types scripts/benchmark-read-snapshot.mjs",
+    "test:read-transport": "node --experimental-strip-types --test tests/native-read-compression.test.mjs",
+    "bench:read-transport": "node --experimental-strip-types scripts/benchmark-large-read-transport.mjs"
   },
   "exports": {
     ".": "./lib/index.js",

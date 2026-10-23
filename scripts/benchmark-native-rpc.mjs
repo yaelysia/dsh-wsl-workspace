@@ -97,7 +97,7 @@ try {
   }
   // Profile just the actual bundled newline sampling expressions, not an imitation.
   const expressions = Object.fromEntries(Object.entries({ before: oldFileWorker.NATIVE_FILE_PROGRAM, after: NATIVE_FILE_PROGRAM })
-    .map(([name, source]) => { const match = /^\s+sample = (.+)$/m.exec(source); assert.ok(match); return [name, match[1]] }))
+    .map(([name, source]) => { const match = /^\s+sample = (original[^\n]+)$/m.exec(source); assert.ok(match, 'newline-sampling expression must use original; compression samples do not qualify'); return [name, match[1]] }))
   const sampleMemory = JSON.parse((await python(String.raw`
 import json, sys, tracemalloc
 expressions = json.loads(sys.stdin.buffer.read())

@@ -1,6 +1,6 @@
 /** Linux file transactions. Mirrors the pinned dsh-fs-local text/guard contract (MIT; see NOTICE). */
 export const NATIVE_FILE_PROGRAM = String.raw`
-import base64, errno, fcntl, json, os, signal, stat, sys, uuid
+import base64, errno, fcntl, json, os, signal, stat, sys, uuid, zlib
 from collections import deque
 
 MAX_CONTENT = 16 * 1024 * 1024
@@ -133,6 +133,24 @@ def read_bytes(path, cap, offset=None, expected=None):
             fail('FS_STALE_VERSION', 'file changed during read')
         return data  # Consumers accept the buffer; avoid a second full-file allocation.
     finally: os.close(fd)
+
+# Compress read-only bytes only when first, middle and final 8 KiB slices
+# all show substantial redundancy. This bounds CPU for random files *and*
+# avoids a cheap, compressible header tricking us into compressing random MBs.
+# Confirm a meaningful full-body reduction after encoding; otherwise fall back.
+# Node independently bounds decompression to the requested uncompressed size.
+def encoded_read(data):
+    if len(data) >= 65536:
+        sample_size = 8192
+        sample = memoryview(data)
+        offsets = (0, (len(data) - sample_size) // 2, len(data) - sample_size)
+        if all(len(zlib.compress(sample[start:start + sample_size], 1)) * 5
+               < sample_size * 4 for start in offsets):
+            compressed = zlib.compress(data, 1)
+            if len(compressed) * 5 < len(data) * 4:
+                return {'dataZ': base64.b64encode(compressed).decode('ascii'),
+                        'rawBytes': len(data)}
+    return {'data': base64.b64encode(data).decode('ascii')}
 
 def text(raw, all_binary=False):
     if b'\0' in (raw if all_binary else raw[:8192]): fail('FS_NOT_TEXT', 'binary file')
@@ -283,11 +301,11 @@ def run(op, req):
             return {'path': path, 'info': None, 'data': None}
         state = probe(path)
         metadata = None if state is None else info(state)
-        data = None
+        data = {'data': None}
         if (state is not None and stat.S_ISREG(state.st_mode)
                 and state.st_size < threshold):
-            data = base64.b64encode(read_bytes(path, MAX_CONTENT)).decode('ascii')
-        return {'path': path, 'info': metadata, 'data': data}
+            data = encoded_read(read_bytes(path, MAX_CONTENT))
+        return {'path': path, 'info': metadata, **data}
     if op == 'fs.resolve': return {'path': canonical(path)}
     if op == 'fs.lstat':
         parent, name = path.rsplit('/', 1)
@@ -304,7 +322,7 @@ def run(op, req):
         offset = req.get('offset') if op == 'fs.range' else None
         if offset is not None and (type(offset) is not int or offset < 0): fail('FS_IO_ERROR', 'invalid range offset')
         data = read_bytes(path, cap, offset, req.get('version'))
-        return {'data': base64.b64encode(data).decode('ascii')}
+        return encoded_read(data)
     if op == 'fs.list':
         s = probe(path)
         if s is None: fail('FS_NOT_FOUND', 'directory not found')

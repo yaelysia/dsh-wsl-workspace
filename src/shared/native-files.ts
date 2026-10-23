@@ -1,6 +1,7 @@
 /** Typed consumer of the shared RPC. No host package at runtime; the provider maps its errors. */
 import { decodeRpcBytes, RpcTransportError, WslRpcPool, type RpcRun, type RpcTarget } from './rpc-transport.ts'
 import { performance } from 'node:perf_hooks'
+import { inflateSync } from 'node:zlib'
 import type { FsErrorCode, FsEditRequest, FsWriteIntent } from '@deepseek-ai/dsh-fs'
 import type { Outcome, RpcMethod } from './rpc-metrics.ts'
 
@@ -33,6 +34,31 @@ export function decodeNativeText(bytes: Uint8Array): string {
   if (bytes.subarray(0, 8192).includes(0)) throw new NativeFileError('FS_NOT_TEXT', 'binary file')
   try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
   catch { throw new NativeFileError('FS_NOT_TEXT', 'invalid UTF-8 text') }
+}
+
+
+/**
+ * Read-only receipt: either canonical raw Base64, or a bounded zlib payload.
+ * Never infer a codec from user bytes and never decompress past a validated cap.
+ * Snapshot's null data means a non-file/missing or streaming-size file.
+ */
+function decodedReadData(receipt: unknown, maxBytes: number, allowNull: boolean): Buffer | null {
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) invalid()
+  const { data, dataZ, rawBytes } = receipt as { data?: unknown; dataZ?: unknown; rawBytes?: unknown }
+  if (dataZ === undefined) {
+    if (rawBytes !== undefined) invalid()
+    if (data === null && allowNull) return null
+    try { return decodeRpcBytes(data, maxBytes) }
+    catch { invalid() }
+  }
+  if (data !== undefined || typeof dataZ !== 'string' || !Number.isSafeInteger(rawBytes)
+    || (rawBytes as number) < 65536 || (rawBytes as number) > maxBytes) invalid()
+  try {
+    const compressed = decodeRpcBytes(dataZ, maxBytes)
+    const restored = inflateSync(compressed, { maxOutputLength: (rawBytes as number) + 1 })
+    if (restored.length !== rawBytes) invalid()
+    return restored
+  } catch { invalid() }
 }
 
 /** Batch only independent read-only calls in the same microtask and identical Linux identity. */
@@ -189,16 +215,11 @@ export class NativeFileClient {
       throw new NativeFileError('FS_IO_ERROR', 'invalid snapshot streaming threshold')
     }
     const value = await this.call(target, 'fs.snapshot', { path, streamMinSize }, options) as {
-      path?: unknown; info?: unknown; data?: unknown
+      path?: unknown; info?: unknown; data?: unknown; dataZ?: unknown; rawBytes?: unknown
     }
-    if (!value || !validPath(value.path) || (value.info !== null && !isInfo(value.info))
-      || !(value.data === null || typeof value.data === 'string')
-      || (typeof value.data === 'string' && (value.info as NativeInfo | null)?.type !== 'file')) invalid()
-    let data: Buffer | null = null
-    if (typeof value.data === 'string') {
-      try { data = decodeRpcBytes(value.data, NATIVE_MAX_BYTES) }
-      catch { invalid() }
-    }
+    if (!value || !validPath(value.path) || (value.info !== null && !isInfo(value.info))) invalid()
+    const data = decodedReadData(value, NATIVE_MAX_BYTES, true)
+    if (data !== null && (value.info as NativeInfo | null)?.type !== 'file') invalid()
     return { path: value.path, info: value.info as NativeInfo | null, data }
   }
 
@@ -226,9 +247,7 @@ export class NativeFileClient {
     return this.bytes(result, length)
   }
   private bytes(value: unknown, max: number): Buffer {
-    const data = (value as { data?: unknown })?.data
-    try { return decodeRpcBytes(data, max) }
-    catch { invalid() }
+    return decodedReadData(value, max, false) as Buffer
   }
   async list(target: RpcTarget, path: string, options?: NativeOptions): Promise<NativeEntry[]> {
     const rows = await this.call(target, 'fs.list', { path }, options)
