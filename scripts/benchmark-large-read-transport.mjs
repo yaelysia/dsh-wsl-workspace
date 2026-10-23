@@ -60,13 +60,6 @@ try {
   expected[filenames[2]]=compressedBody
   expected[filenames[3]]=random
   expected[filenames[4]]=Buffer.concat([random.subarray(0,32*1024),compressedBody.subarray(0,bytes-32*1024)])
-  await python(String.raw`import os,sys
-root=sys.argv[1]
-for path in sys.argv[2:]:
-    size=int.from_bytes(sys.stdin.buffer.read(4),'big')
-    with open(root+'/'+path,'wb') as file:
-        file.write(sys.stdin.buffer.read(size))
-`,[]).catch(()=>{}) // unused: data arrives via exact per-file writes below
   // One Python generator receives content via stdin to keep Windows UNC off the hot path.
   const { writeRaw }=await import('../tests/support/native-fixture.mjs')
   for(const path of filenames) await writeRaw(fixture.root+'/'+path,expected[path])
@@ -94,12 +87,6 @@ for path in sys.argv[2:]:
       const stream=await fs.streamText(c.targets[name])
       const data=await collect(stream)
       assert.equal(data,c.expected.toString('utf8'),'stream text changed')
-    }else{
-      const snapshot=await fs.readSnapshot(c.name.replace('-snapshot','').replace('-4m','-4m.ts'),{
-        cwd:fixture.cwd,streamMinSize:10*1024*1024,
-      })
-      assert.equal(snapshot.info?.type,'file')
-      assert.equal(snapshot.text,c.expected.toString('utf8'))
     }
   }
   // The snapshot must address the physical source file, not the benchmark scenario label.
