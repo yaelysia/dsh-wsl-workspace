@@ -297,6 +297,50 @@ export class WslFileSystem extends LocalFileSystem {
    * resolve/stat/text observation in one RPC; other backends and large files
    * continue using the existing provider methods. No result is retained.
    */
+  /**
+   * Native-only registered read window. A single Linux transaction returns
+   * exact full-file line count and bounded visible lines without uploading
+   * the entire file to Windows. Undefined retains the existing snapshot path
+   * (UNC/Windows drive, startup fallback or unusually high read caps).
+   */
+  async readWindow(path: string, opts: { cwd?: string; signal?: AbortSignal;
+    offset: number; limit: number; maxLineLength: number; maxBytes: number }):
+    Promise<{ target: FsTarget; info: FsInfo | undefined; window: {
+      lines: { number: number; text: string }[]; totalLines: number;
+      truncatedByBytes: boolean; outOfRange: boolean;
+    } } | undefined> {
+    if (opts.signal?.aborted) throw new FsError('resolve aborted', 'FS_ABORTED')
+    if (path.trim().length === 0) throw new FsError('file_path must be a non-empty string', 'FS_NOT_FOUND')
+    const where = this.coordinateForPath(path, opts.cwd)
+    if (!where) return undefined
+    return this.nativeCall(async () => {
+      let result: Awaited<ReturnType<NativeFileClient['window']>>
+      try {
+        result = await this.nativeClient!.window(this.rpcTarget(where), where.path, {
+          offset: opts.offset, limit: opts.limit,
+          maxLineLength: opts.maxLineLength, maxBytes: opts.maxBytes,
+        }, { signal: opts.signal })
+      } catch (error) {
+        // Startup-only failure preserves the original UNC fallback contract.
+        if (this.fileOptions.backend !== 'auto' || where.username !== undefined || opts.signal?.aborted
+          || !(error instanceof RpcTransportError) || error.stage !== 'startup') throw error
+        if (!this.warnedFallback) {
+          this.warnedFallback = true
+          console.warn('wsl-fs: native startup unavailable; reading via UNC')
+        }
+        return undefined
+      }
+      if (result === undefined || result.fallback || mntToWindowsPath(result.path) !== null) return undefined
+      const target = this.targetFor({ ...where, path: result.path })
+      const info = result.info === null ? undefined
+        : { ...result.info, type: result.info.type as FsInfo['type'], version: FsVersion(result.info.version) }
+      return { target, info, window: {
+        lines: result.lines, totalLines: result.totalLines,
+        truncatedByBytes: result.truncatedByBytes, outOfRange: result.outOfRange,
+      } }
+    })
+  }
+
   async readSnapshot(path: string, opts: { cwd?: string; signal?: AbortSignal; streamMinSize: number }):
     Promise<{ target: FsTarget; info: FsInfo | undefined; text?: string }> {
     const { signal, streamMinSize } = opts
