@@ -1,6 +1,6 @@
 /** Linux file transactions. Mirrors the pinned dsh-fs-local text/guard contract (MIT; see NOTICE). */
 export const NATIVE_FILE_PROGRAM = String.raw`
-import base64, errno, fcntl, json, os, signal, stat, sys, uuid, zlib
+import base64, codecs, errno, fcntl, json, os, signal, stat, sys, uuid, zlib
 from collections import deque
 
 MAX_CONTENT = 16 * 1024 * 1024
@@ -152,6 +152,103 @@ def encoded_read(data):
                         'rawBytes': len(data)}
     return {'data': base64.b64encode(data).decode('ascii')}
 
+
+# A registered-read-only operation. Scan the original file once for an exact
+# total-line count and strict UTF-8 validity, but retain at most the requested
+# bounded window. The model-facing JS tool keeps the original schema/rendering.
+# JS counts UTF-16 code units (not Python code points) when truncating lines.
+def read_window(path, req):
+    offset, limit = req.get('offset'), req.get('limit')
+    max_line, max_bytes = req.get('maxLineLength'), req.get('maxBytes')
+    if (any(type(v) is not int for v in (offset, limit, max_line, max_bytes))
+            or not 1 <= offset <= 9007199254740991
+            or not 1 <= limit <= 100000
+            or not 1 <= max_line <= 65536
+            or not 1 <= max_bytes <= 1048576):
+        fail('FS_IO_ERROR', 'invalid native read window limits')
+    fd, initial = regular(path)
+    version = info(initial)
+    lines, total, consumed, truncated = [], 0, 0, False
+    buffer, buffer_units, has_text = '', 0, False
+    cap = max_line + 1
+    decoder = codecs.getincrementaldecoder('utf-8-sig')('strict')
+    first_bytes = 0
+
+    def capture(segment):
+        nonlocal buffer, buffer_units
+        spare = cap - buffer_units
+        if spare <= 0 or not segment:
+            return
+        prefix = []
+        for character in segment:
+            unit = 2 if ord(character) > 0xffff else 1
+            if unit > spare:
+                # JS slice at a surrogate boundary returns the high half.
+                cp = ord(character) - 0x10000
+                prefix.append(chr(0xd800 + (cp >> 10)))
+                buffer_units += 1
+                break
+            prefix.append(character)
+            buffer_units += unit
+            spare -= unit
+            if spare == 0: break
+        buffer += ''.join(prefix)
+
+    def flush():
+        nonlocal total, consumed, truncated, buffer, buffer_units, has_text
+        total += 1
+        if not truncated and offset <= total and len(lines) < limit:
+            line = buffer[:-1] if buffer.endswith('\r') else buffer
+            visible_units = buffer_units - (1 if buffer.endswith('\r') else 0)
+            if visible_units > max_line:
+                # JS substring(maxLine) cuts in UTF-16 units; capture already
+                # contains only maxLine+1 units, including a possible surrogate.
+                utf16 = line.encode('utf-16-le', 'surrogatepass')
+                line = utf16[:max_line * 2].decode('utf-16-le', 'surrogatepass')
+                line += '... (line truncated to %d chars)' % max_line
+            # JS Buffer.byteLength replaces isolated UTF-16 surrogates with U+FFFD.
+            size = len(line.encode('utf-16-le', 'surrogatepass').decode('utf-16-le', 'replace').encode('utf-8'))
+            size += 1 if lines else 0
+            if consumed + size > max_bytes:
+                truncated = True
+            else:
+                consumed += size
+                lines.append({'number': total, 'text': line})
+        buffer, buffer_units, has_text = '', 0, False
+
+    def accept(decoded):
+        nonlocal has_text
+        parts = decoded.split('\n')
+        for index, part in enumerate(parts):
+            if part:
+                has_text = True
+                if not truncated and offset <= total + 1 and len(lines) < limit:
+                    capture(part)
+            if index + 1 < len(parts):
+                flush()
+
+    try:
+        while True:
+            if cancel_requested: fail('FS_ABORTED', 'file window read cancelled')
+            raw = os.read(fd, 65536)
+            if not raw: break
+            if first_bytes < 8192:
+                checked = raw[:8192-first_bytes]
+                if b'\0' in checked: fail('FS_NOT_TEXT', 'binary file')
+                first_bytes += len(checked)
+            try: accept(decoder.decode(raw))
+            except UnicodeDecodeError: fail('FS_NOT_TEXT', 'invalid UTF-8 text')
+        try: accept(decoder.decode(b'', final=True))
+        except UnicodeDecodeError: fail('FS_NOT_TEXT', 'invalid UTF-8 text')
+        if has_text: flush()
+        if info(os.fstat(fd))['version'] != version['version']:
+            fail('FS_STALE_VERSION', 'file changed during read')
+    finally:
+        os.close(fd)
+    out_of_range = not truncated and offset > total and not (total == 0 and offset == 1)
+    return {'info': version, 'lines': lines, 'totalLines': total,
+            'truncatedByBytes': truncated, 'outOfRange': out_of_range}
+
 def text(raw, all_binary=False):
     if b'\0' in (raw if all_binary else raw[:8192]): fail('FS_NOT_TEXT', 'binary file')
     try: return raw.decode('utf-8-sig')
@@ -286,6 +383,18 @@ def atomic(path, req, editing=False):
 
 def run(op, req):
     path = req['path']
+    if op == 'fs.window':
+        # The Windows drive backend must own drvfs paths, as for fs.snapshot.
+        path = canonical(path)
+        if (len(path) >= 6 and path.startswith('/mnt/') and path[5].isascii()
+                and path[5].isalpha() and (len(path) == 6 or path[6] == '/')):
+            return {'path': path, 'fallback': True}
+        state = probe(path)
+        if state is None or not stat.S_ISREG(state.st_mode):
+            return {'path': path, 'info': None if state is None else info(state),
+                    'lines': [], 'totalLines': 0, 'truncatedByBytes': False,
+                    'outOfRange': False}
+        return {'path': path, **read_window(path, req)}
     if op == 'fs.snapshot':
         # Read-tool-only transaction: resolve, observe, and (for small regular
         # files) read within one native round trip. The original per-call
@@ -400,7 +509,7 @@ if sys.argv[1] == '--persistent':
         message = json.loads(raw)
         os.chdir(message['cwd'])
         result, code = dispatch(message['op'], message['payload'])
-        data = json.dumps(result, ensure_ascii=False, separators=(',', ':')).encode('utf-8') + b'\n'
+        data = json.dumps(result, ensure_ascii=message['op'] == 'fs.window', separators=(',', ':')).encode('utf-8') + b'\n'
         sys.stdout.buffer.write(str(code).encode('ascii') + data)
         sys.stdout.buffer.flush()
         del message, raw, result, data  # Keep no previous request or file-body cache.
@@ -408,7 +517,7 @@ else:
     raw = sys.stdin.buffer.read(MAX_WIRE + 1)
     if len(raw) > MAX_WIRE: raise ValueError('native request exceeded its byte limit')
     result, code = dispatch(sys.argv[1], raw)
-    sys.stdout.buffer.write((json.dumps(result, ensure_ascii=False, separators=(',', ':')) + '\n').encode('utf-8'))
+    sys.stdout.buffer.write((json.dumps(result, ensure_ascii=sys.argv[1] == 'fs.window', separators=(',', ':')) + '\n').encode('utf-8'))
     sys.stdout.buffer.flush()
     sys.exit(code)
 `
