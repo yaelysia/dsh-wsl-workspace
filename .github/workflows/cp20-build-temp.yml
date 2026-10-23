@@ -42,6 +42,9 @@ jobs:
           done
           npm run test:unit
           npm run test:docs
+          # The checked-in tree has an inherited error baseline: show only
+          # touched source locations to distinguish a new error from old ones.
+          npm run typecheck 2>&1 | grep -E '^(src/fs.ts|src/host/wsl-read-tool.ts|src/shared/native-files.ts|src/shared/rpc-worker.ts|src/shared/rpc-metrics.ts)' || true
           npm run typecheck:gate
           npm run test:version -- --base 2cf4604d1b516a1036488c1c1220d525d4b9e12b
       - name: Commit only verified and reproducible built artifacts
