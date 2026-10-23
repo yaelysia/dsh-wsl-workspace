@@ -296,6 +296,11 @@ assert(searchRow !== null && existsSync(searchRow[1]), 'the search row points at
 assert((stdYaml.match(/- id: read-image-wsl\n/g) ?? []).length === 1, 'the world mounts exactly one image read row')
 const imageRow = /- id: read-image-wsl\n\s+name: '(.+wsl-image-tool\.js)'/.exec(stdYaml)
 assert(imageRow !== null && existsSync(imageRow[1]), 'the image read row points at a real lib file')
+  const textRow = /- id: read-wsl\n\s+name: '(.+wsl-read-tool\.js)'/.exec(stdYaml)
+  assert(textRow !== null && existsSync(textRow[1]), 'the fused text read uses a built module')
+  assert((stdYaml.match(/- id: read-wsl\n/g) ?? []).length === 1, 'one text read row per WSL world')
+  assert(/- id: tool-fs\n\s+name: '@deepseek-ai\/dsh-tool-fs'\n\s+config:\n\s+read: false/.test(stdYaml),
+    'host write/edit stay mounted while stock read is disabled')
 assert((stdYaml.match(/name: '@deepseek-ai\/dsh-tool-fs-search'/g) ?? []).length === 0, 'no row mounts the Windows ripgrep suite')
 assert(stdYaml.includes('- id: wsl-world'), 'variant injects wsl realm')
 assert(stdYaml.includes('inside a WSL'), 'variant persona amended')

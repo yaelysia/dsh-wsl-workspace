@@ -292,6 +292,48 @@ export class WslFileSystem extends LocalFileSystem {
     })
   }
 
+  /**
+   * The model-facing read fast path. Small Linux files return a coherent
+   * resolve/stat/text observation in one RPC; other backends and large files
+   * continue using the existing provider methods. No result is retained.
+   */
+  async readSnapshot(path: string, opts: { cwd?: string; signal?: AbortSignal; streamMinSize: number }):
+    Promise<{ target: FsTarget; info: FsInfo | undefined; text?: string }> {
+    const { signal, streamMinSize } = opts
+    if (signal?.aborted) throw new FsError('resolve aborted', 'FS_ABORTED')
+    if (path.trim().length === 0) throw new FsError('file_path must be a non-empty string', 'FS_NOT_FOUND')
+    if (!Number.isSafeInteger(streamMinSize) || streamMinSize < 1) {
+      throw new FsError('invalid snapshot streaming threshold', 'FS_IO_ERROR')
+    }
+    const observed = async (target: FsTarget) => {
+      const info = await this.stat(target, signal)
+      return { target, info, ...info?.type === 'file' && info.size !== undefined && info.size < streamMinSize
+        ? { text: await this.readText(target, signal) } : {} }
+    }
+    const where = this.coordinateForPath(path, opts.cwd)
+    if (where === undefined) return observed(await this.resolve(path, opts))
+    return this.nativeCall(async () => {
+      let snapshot: Awaited<ReturnType<NativeFileClient['snapshot']>>
+      try {
+        snapshot = await this.nativeClient!.snapshot(this.rpcTarget(where), where.path, streamMinSize, { signal })
+      } catch (error) {
+        // As for resolve(): UNC fallback only before the native operation has
+        // been dispatched and only without an explicitly selected Linux user.
+        if (this.fileOptions.backend !== 'auto' || where.username !== undefined || signal?.aborted
+          || !(error instanceof RpcTransportError) || error.stage !== 'startup') throw error
+        if (!this.warnedFallback) { this.warnedFallback = true; console.warn('wsl-fs: native startup unavailable; resolving via UNC') }
+        return observed(await this.resolveUnc(path, opts))
+      }
+      const drive = mntToWindowsPath(snapshot.path)
+      if (drive !== null) return observed(await this.resolveUnc(drive, opts))
+      const target = this.targetFor({ ...where, path: snapshot.path })
+      const info = snapshot.info === null ? undefined : {
+        ...snapshot.info, type: snapshot.info.type as FsInfo['type'], version: FsVersion(snapshot.info.version),
+      }
+      return { target, info, ...snapshot.data === null ? {} : { text: decodeNativeText(snapshot.data) } }
+    })
+  }
+
   override async stat(target: FsTarget, signal?: AbortSignal): Promise<FsInfo | undefined> {
     const where = nativeCoordinate(String(target.targetKey))
     if (!where) return super.stat(target, signal)

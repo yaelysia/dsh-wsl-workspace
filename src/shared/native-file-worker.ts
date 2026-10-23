@@ -268,6 +268,26 @@ def atomic(path, req, editing=False):
 
 def run(op, req):
     path = req['path']
+    if op == 'fs.snapshot':
+        # Read-tool-only transaction: resolve, observe, and (for small regular
+        # files) read within one native round trip. The original per-call
+        # physical path and fresh inode checks are reused, never cached.
+        threshold = req.get('streamMinSize')
+        if type(threshold) is not int or threshold < 1:
+            fail('FS_IO_ERROR', 'invalid snapshot streaming threshold')
+        path = canonical(path)
+        # /mnt/<drive> is served by the Windows backend. Do not probe that
+        # drvfs inode here: Linux may deny access where Win32 can still read.
+        if (len(path) >= 6 and path.startswith('/mnt/') and path[5].isascii()
+                and path[5].isalpha() and (len(path) == 6 or path[6] == '/')):
+            return {'path': path, 'info': None, 'data': None}
+        state = probe(path)
+        metadata = None if state is None else info(state)
+        data = None
+        if (state is not None and stat.S_ISREG(state.st_mode)
+                and state.st_size < threshold):
+            data = base64.b64encode(read_bytes(path, MAX_CONTENT)).decode('ascii')
+        return {'path': path, 'info': metadata, 'data': data}
     if op == 'fs.resolve': return {'path': canonical(path)}
     if op == 'fs.lstat':
         parent, name = path.rsplit('/', 1)

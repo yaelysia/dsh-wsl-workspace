@@ -14,6 +14,7 @@ export interface NativePolicy { mode: string; roots: string[] }
 export interface NativeInfo { version: string; type: 'file' | 'directory' | 'symlink' | 'other'; size: number }
 export interface NativeEntry extends Partial<NativeInfo> { name: string; path: string; type: NativeInfo['type'] }
 export interface NativeWrite { version: string; before: string | null; after: string; operation?: 'create' | 'update' }
+export interface NativeSnapshot { path: string; info: NativeInfo | null; data: Buffer | null }
 export interface NativeOptions { signal?: AbortSignal | undefined; timeoutMs?: number | undefined }
 export class NativeFileError extends Error {
   readonly code: FsErrorCode
@@ -180,6 +181,25 @@ export class NativeFileClient {
       // Preserve startup stage so ONLY resolve can select the UNC fallback before creating a target.
       throw error
     } finally { this.pool.metrics.record(`file.${op.slice(3)}` as `file.${'resolve'}`, performance.now() - started, outcome) }
+  }
+
+  async snapshot(target: RpcTarget, path: string, streamMinSize: number,
+    options?: NativeOptions): Promise<NativeSnapshot> {
+    if (!Number.isSafeInteger(streamMinSize) || streamMinSize < 1) {
+      throw new NativeFileError('FS_IO_ERROR', 'invalid snapshot streaming threshold')
+    }
+    const value = await this.call(target, 'fs.snapshot', { path, streamMinSize }, options) as {
+      path?: unknown; info?: unknown; data?: unknown
+    }
+    if (!value || !validPath(value.path) || (value.info !== null && !isInfo(value.info))
+      || !(value.data === null || typeof value.data === 'string')
+      || (typeof value.data === 'string' && (value.info as NativeInfo | null)?.type !== 'file')) invalid()
+    let data: Buffer | null = null
+    if (typeof value.data === 'string') {
+      try { data = decodeRpcBytes(value.data, NATIVE_MAX_BYTES) }
+      catch { invalid() }
+    }
+    return { path: value.path, info: value.info as NativeInfo | null, data }
   }
 
   async resolve(target: RpcTarget, path: string, options?: NativeOptions): Promise<string> {

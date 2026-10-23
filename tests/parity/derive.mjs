@@ -157,7 +157,7 @@ export function registeredToolNames() {
     if (!file.endsWith('.ts')) continue
     const source = read(join('src', 'host', file))
     for (const match of source.matchAll(/export const TOOL_NAME = '([^']+)'/g)) names.add(match[1])
-    for (const match of source.matchAll(/^\s+name: '(grep|glob)',$/gm)) names.add(match[1])
+    for (const match of source.matchAll(/^\s+name: '(grep|glob|read)',$/gm)) names.add(match[1])
   }
   return [...names].sort()
 }

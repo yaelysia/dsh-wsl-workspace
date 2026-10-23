@@ -31,6 +31,8 @@ inherits source code from the upstream repository:
   contract, tested against the pinned `0.2.0-rc.2` host package. Linux RPC,
   descriptor-relative path handling and file-transaction publication are
   implemented here; the upstream MIT notice applies to the adapted portions.
+- `@deepseek-ai/dsh-tool-fs` (packages/fs/tool-fs) — the WSL text read tool adapts the host's line-numbered result rendering, UTF-8 read windows, read cards, and `fs/observed` event behavior.
+- `@deepseek-ai/dsh-util-code-language` (packages/util/code-language) — `src/shared/read-language.ts` adapts the host read-card extension→short-language mapping as local pure data, to keep the result metadata compatible without bundling its Cordis peer dependency.
 - `apps/cli/config/agent-presets/{standard,minimal,code,cordis}/agent.cordis.yml`
   — the preset-variant generator (`src/host/variants.ts`) reads and
   transforms these shipped compositions; the variant persona text is
