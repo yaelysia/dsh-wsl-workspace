@@ -27,12 +27,13 @@ test('adaptive codec is exercised only for compressible and large read-only rece
   const structured = Buffer.from('const item = aValue + 42;\n'.repeat(180000)).subarray(0,4*1024*1024)
   const random = await python('import os,sys;sys.stdout.buffer.write(os.urandom(int(sys.argv[1])))', [String(4*1024*1024)])
   const mixed = Buffer.concat([random.subarray(0,32*1024),structured.subarray(0,4*1024*1024-32*1024)])
+  const tricky = Buffer.concat([Buffer.alloc(16*1024,0x61),random.subarray(0,4*1024*1024-16*1024)])
   const tiny = Buffer.alloc(4096,0x61)
-  for(const [name,data] of [['structured.ts',structured],['random.bin',random],['mixed.bin',mixed],['tiny.txt',tiny]]) {
+  for(const [name,data] of [['structured.ts',structured],['random.bin',random],['mixed.bin',mixed],['compressible-header.bin',tricky],['tiny.txt',tiny]]) {
     await writeRaw(root+'/'+name,data)
   }
   const receipts = intercepted(fs)
-  for(const [name,bytes] of [['structured.ts',structured],['random.bin',random],['mixed.bin',mixed],['tiny.txt',tiny]]){
+  for(const [name,bytes] of [['structured.ts',structured],['random.bin',random],['mixed.bin',mixed],['compressible-header.bin',tricky],['tiny.txt',tiny]]){
     const target = await fs.resolve(name)
     const found = await fs.readBytes(target,undefined,bytes.length)
     assert.deepEqual(expectedData(found),bytes)
