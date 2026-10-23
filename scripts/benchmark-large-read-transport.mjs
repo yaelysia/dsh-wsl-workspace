@@ -53,13 +53,14 @@ const summarize=values=>{const sorted=[...values].sort((a,b)=>a-b)
     p95Ms:+sorted[Math.ceil(sorted.length*.95)-1].toFixed(3),rawMs:values}}
 const clip=values=>values.map(x=>Math.round(x))
 try {
-  const filenames=['small.txt','source-256k.ts','source-4m.ts','random-4m.bin','mixed-4m.bin']
+  const filenames=['small.txt','source-256k.ts','source-4m.ts','random-4m.bin','mixed-4m.bin','random-with-text-header.bin']
   const random=await python('import os,sys;sys.stdout.buffer.write(os.urandom(int(sys.argv[1])))',[String(bytes)])
   expected[filenames[0]]=Buffer.from('a'.repeat(4096))
   expected[filenames[1]]=compressedBody.subarray(0,256*1024)
   expected[filenames[2]]=compressedBody
   expected[filenames[3]]=random
   expected[filenames[4]]=Buffer.concat([random.subarray(0,32*1024),compressedBody.subarray(0,bytes-32*1024)])
+  expected[filenames[5]]=Buffer.concat([Buffer.alloc(16*1024,0x61),random.subarray(0,bytes-16*1024)])
   // One Python generator receives content via stdin to keep Windows UNC off the hot path.
   const { writeRaw }=await import('../tests/support/native-fixture.mjs')
   for(const path of filenames) await writeRaw(fixture.root+'/'+path,expected[path])
