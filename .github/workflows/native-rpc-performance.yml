@@ -6,6 +6,9 @@ on:
       - src/shared/rpc-worker.ts
       - src/shared/rpc-transport.ts
       - scripts/benchmark-native-rpc.mjs
+      - scripts/benchmark-large-read-transport.mjs
+      - tests/native-read-compression.test.mjs
+      - src/shared/native-files.ts
       - .github/workflows/native-rpc-performance.yml
   workflow_dispatch:
 permissions:
@@ -76,6 +79,34 @@ jobs:
           writeFileSync('logs/summary.json', text)
           console.log(text)
           NODE
+      - name: CP19 exact native read codec contract (source and shipped lib)
+        run: |
+          set -euo pipefail
+          DSH_WSL_TEST_PLANE=src npm run test:read-transport > logs/adaptive-src.log 2>&1
+          DSH_WSL_TEST_PLANE=lib npm run test:read-transport > logs/adaptive-lib.log 2>&1
+          tail -8 logs/adaptive-src.log
+          tail -8 logs/adaptive-lib.log
+      - name: CP19 paired native read vs merged CP18 baseline
+        run: |
+          set -euo pipefail
+          git worktree add --detach .cp19-baseline a11073dbad8bd1a54cce7cf62f9e8dc04735b450
+          node -e "require('node:fs').symlinkSync(require('node:path').resolve('node_modules'), '.cp19-baseline/node_modules', process.platform === 'win32' ? 'junction' : 'dir')"
+          npm run bench:read-transport -- --baseline .cp19-baseline --iterations 20 --output logs/adaptive-benchmark.json > logs/adaptive-benchmark.log 2>&1
+          node --input-type=module <<'NODE'
+          import {readFileSync,writeFileSync} from 'node:fs'
+          const report=JSON.parse(readFileSync('logs/adaptive-benchmark.json'))
+          const summary={platform:report.platform,baselineSha:report.baselineSha,iterations:report.iterations,
+            rows:report.rows.map(row=>({scenario:row.scenario,bytes:row.fileBytes,
+              beforeP50Ms:row.before.wall.p50Ms,afterP50Ms:row.after.wall.p50Ms,
+              beforeP95Ms:row.before.wall.p95Ms,afterP95Ms:row.after.wall.p95Ms,
+              beforeWireBytes:row.before.stdoutBytes[0],afterWireBytes:row.after.stdoutBytes[0],
+              beforeDecodedBytes:row.before.decodedReceiptBytes[0],afterDecodedBytes:row.after.decodedReceiptBytes[0],
+              rpcBefore:row.before.rpcCounts[0],rpcAfter:row.after.rpcCounts[0]})),
+            pools:report.pools}
+          writeFileSync('logs/adaptive-summary.json',JSON.stringify(summary,null,2)+'\n')
+          console.log(JSON.stringify(summary,null,2))
+          NODE
+          git worktree remove --force .cp19-baseline
       - uses: actions/upload-artifact@v4
         if: always()
         with:
