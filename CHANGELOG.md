@@ -2,6 +2,23 @@
 
 All notable changes to `dsh-wsl-workspace`, newest first. Back to the [README](README.md); the Chinese record is [CHANGELOG.zh.md](CHANGELOG.zh.md).
 
+## 0.7.8 — 2026-10-23
+- **P3 / CP19: adaptive large-file reads.** For highly redundant read-only data, the WSL file
+  backend uses bounded compression rather than transferring two large Base64 layers.
+  Real Windows→WSL2 testing of a synthetic, repetitive 4 MiB source file improved P50
+  **148.565 → 17.469 ms** (8.50×); 4 MiB `streamText` improved **138.662 → 36.849 ms**
+  (3.76×). Random binary **did not improve**; these are not Desktop or model timings.
+  [CP19 evidence](docs/performance-cp19.md) · [PR #16](https://github.com/yaelysia/dsh-wsl-workspace/pull/16).
+- **P2 / CP18: fused serial small-file reads.** For 24 serial 4 KiB text reads on Windows→WSL2,
+  P50 **78.101 → 31.907 ms** (2.45×) and native RPCs **72 → 24**.
+  [CP18 evidence](docs/performance-cp18.md).
+- **Earlier search and read optimizations:** CP17 safely prunes wildcard-anchored grep/glob
+  traversals; CP16 batches independent concurrent read-only RPCs.
+  [CP17](docs/performance-cp17.md) · [CP16](docs/performance-cp16.md).
+- **Version policy:** `package.json` and `package-lock.json` now advance together.
+  The PR CI gate requires a version increase for non-documentation changes, while
+  documentation-only changes are exempt.
+
 ## 0.7.7 — 2026-10-07
 - **The stderr arm of the spill file keeps the same promises the stdout arm does.** Four things were
   measured on a real distribution (2026-10-11, Ubuntu, `seq 1 200000 >&2`) and all four are fixed.

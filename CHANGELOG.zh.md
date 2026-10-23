@@ -4,6 +4,21 @@
 
 本文件为中文记录（0.4.3 及更早为摘要）；英文原文见 [CHANGELOG.md](CHANGELOG.md)。
 
+## 0.7.8 — 2026-10-23
+- **P3 / CP19：大文件自适应压缩读取。** 仅对明显可压缩的大块只读数据减少两层 Base64
+  带来的传输负载；小文件、随机二进制等沿用原始格式。Windows→WSL2 上合成、高度重复
+  的 4 MiB 源代码读取 P50 **148.565 → 17.469 ms**（8.50×），
+  4 MiB `streamText` **138.662 → 36.849 ms**（3.76×）。
+  **随机二进制没有加速**；不包含 Desktop 或模型耗时。
+  [CP19 验证](docs/performance-cp19.md) · [PR #16](https://github.com/yaelysia/dsh-wsl-workspace/pull/16)。
+- **P2 / CP18：串行小文件读取合并为一次原生 RPC。** Windows→WSL2 串行读取
+  24 个 4 KiB 文件的 P50 **78.101 → 31.907 ms**（2.45×），RPC 次数 **72 → 24**。
+  [CP18 验证](docs/performance-cp18.md)。
+- **此前已合入的优化：** CP17 安全通配符目录剪枝、CP16 并发只读请求合并。
+  适用边界见 [CP17](docs/performance-cp17.md)、[CP16](docs/performance-cp16.md)。
+- **版本管理：** `package.json` 与 `package-lock.json` 同步递增；
+  非纯文档修改的 PR 必须推进版本号，CI 会提前检查。
+
 ## 0.7.7 — 2026-10-07
 - **stderr 那一侧的溢出文件，现在和 stdout 那一侧守同样的承诺。** 四条都在真实发行版上量过（2026-10-11，
   Ubuntu，`seq 1 200000 >&2`），四条都已修。

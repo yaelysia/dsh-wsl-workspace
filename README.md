@@ -56,8 +56,8 @@ only when building or testing this repository as a developer.
 3. Enable the plugin, then **fully exit and restart DSH** (including its host process).
 
 The upstream npm package named `dsh-wsl-workspace` is **not** this fork. Do not enable
-both copies under the same plugin identity. The package's development version remains
-`0.7.7`; **check the Git source and resolved commit SHA**, not just that version label.
+both copies under the same plugin identity. The installed plugin version is declared in [`package.json`](package.json). For Git installations,
+**also check the Git source and resolved commit SHA** to verify which code was installed.
 
 **Updating:** Use the same Git source. If DSH's plugin updater cannot identify an
 already-installed Git package, record your settings, remove the old copy through the
