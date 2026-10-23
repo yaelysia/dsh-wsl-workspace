@@ -2,6 +2,19 @@
 
 All notable changes to `dsh-wsl-workspace`, newest first. Back to the [README](README.md); the Chinese record is [CHANGELOG.zh.md](CHANGELOG.zh.md).
 
+## 0.7.9 — 2026-10-23
+- **CP20: native line-window reads.** For WSL-native files the registered `read` tool
+  now lets Linux scan and count all UTF-8 lines while returning only the bounded
+  `offset`/`limit` window. This avoids transporting entire large files for
+  small excerpts; the original read schema, output rendering, `fs/observed`
+  events, safe edit versions, CRLF/BOM/UTF-8 validation and UNC fallback remain.
+  The first implementation uses **one fresh file scan per request**, with no
+  persistent line-index cache. Performance must be interpreted by the paired
+  Linux and Windows→WSL2 benchmark, not extrapolated to all files.
+- Added cross-platform registered-tool parity, large-file, cancellation and
+  version-guard tests, plus a real-provider benchmark. The manifest, lockfile,
+  client help text and committed build are synchronized.
+
 ## 0.7.8 — 2026-10-23
 - **P3 / CP19: adaptive large-file reads.** For highly redundant read-only data, the WSL file
   backend uses bounded compression rather than transferring two large Base64 layers.
