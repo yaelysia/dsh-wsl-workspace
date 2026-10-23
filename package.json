@@ -1,7 +1,7 @@
 {
   "name": "dsh-wsl-workspace",
   "description": "Keep DSH on Windows while using local WSL workspaces, persistent search and guarded native file I/O. Native RPC uses Linux Python 3.8+; UNC compatibility remains available.",
-  "version": "0.7.7",
+  "version": "0.7.8",
   "type": "module",
   "packageManager": "npm@11.19.0",
   "repository": {
@@ -33,6 +33,7 @@
     "test:compat": "bash scripts/verify-dsh-compat.sh",
     "test:docs": "node scripts/check-docs-parity.mjs",
     "test:matrix": "node scripts/check-release-matrix.mjs",
+    "test:version": "node scripts/check-version-bump.mjs",
     "prepack": "npm run build",
     "prepublishOnly": "node scripts/verify-install.mjs && node scripts/verify-lib-sync.mjs",
     "test:docs-claims": "node --experimental-strip-types scripts/run-docs-claims.mjs",

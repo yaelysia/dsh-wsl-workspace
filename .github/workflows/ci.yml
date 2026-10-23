@@ -30,10 +30,19 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # PR merge commit plus its base parent
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
+      - name: plugin version and lockfile consistency (require bump for non-doc PRs)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            npm run test:version -- --base HEAD^1
+          else
+            npm run test:version
+          fi
       - run: npm ci
       - name: committed lib/ is what HEAD says it is (before anything can rewrite it)
         run: node scripts/verify-lib-sync.mjs --check-only
