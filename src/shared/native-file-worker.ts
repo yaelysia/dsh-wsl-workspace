@@ -217,7 +217,21 @@ def read_window(path, req):
         buffer, buffer_units, has_text = '', 0, False
 
     def accept(decoded):
-        nonlocal has_text
+        nonlocal has_text, total
+        if not decoded: return
+        newline_count = decoded.count('\n')
+        # Still validate every UTF-8 byte, but count irrelevant lines inside
+        # CPython instead of allocating hundreds of thousands of strings.
+        # A whole decoded chunk may be skipped only when it cannot reach the
+        # requested first line, or the output window is already complete.
+        if (truncated or len(lines) >= limit or
+                total + newline_count + 1 < offset):
+            total += newline_count
+            if newline_count:
+                has_text = decoded[-1] != '\n'
+            else:
+                has_text = True
+            return
         parts = decoded.split('\n')
         for index, part in enumerate(parts):
             if part:
