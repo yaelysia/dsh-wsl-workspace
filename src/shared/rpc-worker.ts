@@ -29,7 +29,7 @@ if sys.platform != "linux" or sys.version_info < (3, 8):
 
 LIMIT = 1048576
 FILE_LIMIT = 32 * LIMIT
-FILE_METHODS = ["fs.batch", "fs.snapshot", "fs.resolve", "fs.stat", "fs.lstat", "fs.read", "fs.range", "fs.list", "fs.write", "fs.edit"]
+FILE_METHODS = ["fs.batch", "fs.snapshot", "fs.window", "fs.resolve", "fs.stat", "fs.lstat", "fs.read", "fs.range", "fs.list", "fs.write", "fs.edit"]
 lock = threading.RLock()
 output_lock = threading.Lock()
 active = {}
