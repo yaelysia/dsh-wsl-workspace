@@ -1,8 +1,8 @@
 /** Bounded, in-memory timing counters. No paths, user identities, arguments or file contents. */
 export type Outcome = 'ok' | 'error' | 'aborted' | 'overflow'
-export const RPC_METHODS = ['grep', 'glob', 'fs.metadata', 'fs.batch', 'fs.snapshot', 'fs.resolve', 'fs.stat', 'fs.lstat', 'fs.read', 'fs.range', 'fs.list', 'fs.write', 'fs.edit'] as const
+export const RPC_METHODS = ['grep', 'glob', 'fs.metadata', 'fs.batch', 'fs.snapshot', 'fs.window', 'fs.resolve', 'fs.stat', 'fs.lstat', 'fs.read', 'fs.range', 'fs.list', 'fs.write', 'fs.edit'] as const
 export type RpcMethod = typeof RPC_METHODS[number]
-export type TimingKey = `file.${'snapshot' | 'resolve' | 'stat' | 'lstat' | 'read' | 'range' | 'list' | 'write' | 'edit'}` | `tool.${'grep' | 'glob'}` | `oneshot.${'grep' | 'glob'}`
+export type TimingKey = `file.${'snapshot' | 'window' | 'resolve' | 'stat' | 'lstat' | 'read' | 'range' | 'list' | 'write' | 'edit'}` | `tool.${'grep' | 'glob'}` | `oneshot.${'grep' | 'glob'}`
   | `rpc.${RpcMethod}.${'total' | 'ready' | 'roundTrip' | 'queue' | 'execute'}`
 /** Shared execution accounting; grep exit 1 means no matches, not a failure. */
 export function rpcRunOutcome(result: { aborted: boolean; code: number | null; stdout: Uint8Array },

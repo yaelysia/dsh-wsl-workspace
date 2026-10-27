@@ -33,6 +33,11 @@ function legacyFs(fs) {
     processPath:fs.processPath.bind(fs),
   }
 }
+// CP18's snapshot-specific parity suite deliberately isolates its public API.
+function snapshotOnly(fs) {
+  return { readSnapshot: fs.readSnapshot.bind(fs),
+    streamText: fs.streamText.bind(fs), processPath: fs.processPath.bind(fs) }
+}
 function codes(error) { return error?.code }
 const execute = async (tool, args, fs, operations) => {
   operations.length = 0
@@ -45,7 +50,7 @@ test('native WSL read retains old read-tool result when three RPCs collapse to o
   t.after(() => f.cleanup())
   await writeRaw(f.root+'/single.ts', Buffer.from('first\r\nsecond\n','utf8'))
   const old = mount(legacyFs(f.fs), f.cwd, optimized.apply, {})
-  const next = mount(f.fs, f.cwd, optimized.apply, {})
+  const next = mount(snapshotOnly(f.fs), f.cwd, optimized.apply, {})
   const calls = []
   const pool = f.fs.wslRpcPool, run = pool.run.bind(pool)
   pool.run = (where, req) => { calls.push(req.op); return run(where, req) }
@@ -78,7 +83,7 @@ test('snapshot preserves windows, missing/type/text errors and stream fallback',
   t.after(() => f.cleanup())
   const caps = { readLimit: 50, readMaxLineLength: 9, readMaxBytes: 32, readStreamMinSize: 128 }
   const old = mount(legacyFs(f.fs), f.cwd, optimized.apply, caps)
-  const next = mount(f.fs, f.cwd, optimized.apply, caps)
+  const next = mount(snapshotOnly(f.fs), f.cwd, optimized.apply, caps)
   await python('import os,sys;os.mkdir(sys.argv[1])', [f.root+'/directory'])
   const fixtures = [
     ['normal.ts', Buffer.from('a\n1234567890123\nthird\n')],

@@ -1,7 +1,7 @@
 {
   "name": "dsh-wsl-workspace-enhanced",
   "description": "Keep DSH on Windows while using local WSL workspaces, persistent search and guarded native file I/O. Native RPC uses Linux Python 3.8+; UNC compatibility remains available.",
-  "version": "0.7.9",
+  "version": "0.7.10",
   "type": "module",
   "packageManager": "npm@11.19.0",
   "repository": {
@@ -64,7 +64,9 @@
     "test:read-snapshot": "node --experimental-strip-types --test tests/wsl-read-snapshot.test.mjs",
     "bench:read-snapshot": "node --experimental-strip-types scripts/benchmark-read-snapshot.mjs",
     "test:read-transport": "node --experimental-strip-types --test tests/native-read-compression.test.mjs",
-    "bench:read-transport": "node --experimental-strip-types scripts/benchmark-large-read-transport.mjs"
+    "bench:read-transport": "node --experimental-strip-types scripts/benchmark-large-read-transport.mjs",
+    "test:read-window": "node --experimental-strip-types --test tests/wsl-read-window.test.mjs",
+    "bench:read-window": "node --experimental-strip-types scripts/benchmark-read-window.mjs"
   },
   "exports": {
     ".": "./lib/index.js",

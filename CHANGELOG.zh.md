@@ -4,6 +4,11 @@
 
 本文件为中文记录（0.4.3 及更早为摘要）；英文原文见 [CHANGELOG.md](CHANGELOG.md)。
 
+## 0.7.10 — 2026-10-27
+- **CP20：原生按行窗口读取。** WSL 内的 `read` 现在直接由 Linux 扫描并统计准确行数，只将 `offset`/`limit` 对应的内容传回 Windows，无须先传输整个文件。工具参数、显示、`fs/observed`、版本保护、BOM/CRLF 与 Windows 挂载盘/UNC 回退保持原有行为。
+- Linux 每次调用都重新扫描文件，不缓存长期行索引；窗口读取可处理超过 16 MiB 的文件，而完整读写/编辑仍保持原来的 16 MiB 上限。新增注册工具对照与 Windows→WSL2 配对性能测试；实际性能收益以测试结果为准，小文件负面控制也必须报告。
+- 继续沿用 0.7.9 已更名的独立发布包 **`dsh-wsl-workspace-enhanced`** 与对应的 DSH/client 模块标识，不覆盖独立发布配置。
+
 ## 0.7.9 — 2026-10-23
 - 使用独立 npm 包名 `dsh-wsl-workspace-enhanced` 发布增强 fork，与上游包区分。
 - 同步 DSH 挂载清单、前端模块标识与帮助面板 npm 链接。
