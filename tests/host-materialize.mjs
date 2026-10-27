@@ -307,17 +307,9 @@ assert(stdYaml.includes('inside a WSL'), 'variant persona amended')
 const shellRow = /name: '(.+shell\.js)'/.exec(stdYaml)
 assert(shellRow !== null && existsSync(shellRow[1]), 'variant shell row points at a real lib file')
 
-// ── skill catalog over UNC: the watcher must be off ───────────────────────
-// A //wsl.localhost/... workspace cannot be watched by chokidar; the failed
-// watcher makes the observation incomplete and withholds the whole catalog.
-// The materializer therefore pins `watch: false` on the skill-filesystem row.
-assert(stdYaml.includes('- id: skill-filesystem'), 'variant keeps the skill-filesystem row')
-assert(
-  /- id: skill-filesystem\n(?:.*\n)*?\s+config:\n\s+watch: false\n/.test(stdYaml),
-  'skill watch is disabled as the first config child of a row that already had config',
-)
-assert(stdYaml.includes('directories:\n      - .agents/skills'), 'the row\'s pre-existing config survives the merge')
-assert(!/watch: true/.test(stdYaml), 'no variant leaves the skill watcher enabled')
+// WSL variant deliberately does not mount the host's Skills provider or tool.
+assert(!stdYaml.includes('- id: skill-filesystem'), 'WSL preset omits Skills provider')
+assert(!stdYaml.includes('dsh-tool-skill'), 'WSL preset omits Skills tool')
 
 const newVariant = join(home, '.agent-presets', 'wsl-standard-new')
 assert(existsSync(newVariant), 'v0.1.3+ persona-shape variant generated')
@@ -401,10 +393,7 @@ assert(minYaml.includes('wsl-sandbox.js'), 'the world provides its own sandbox c
 assert(minYaml.includes('sandbox: true'), 'the sandbox capability is world-local')
 assert(!minYaml.includes("name: '@deepseek-ai/dsh-tool-bash'"), 'the one-shot bash tool row is replaced, not duplicated')
 assert((minYaml.match(/name: 'bash'/g) ?? []).length <= 1, 'no two rows claim the bash tool name')
-assert(
-  /- id: skill-filesystem\n  name: '[^']+'\n  config:\n    watch: false\n/.test(minYaml),
-  'a skill-filesystem row with no config gets one carrying watch: false',
-)
+assert(!minYaml.includes('skill-filesystem'), 'minimal WSL preset omits Skills provider')
 
 const prefabVariant = join(home, '.agent-presets', 'wsl-third-party-local')
 const prefabYaml = readFileSync(join(prefabVariant, 'agent.cordis.yml'), 'utf8')
