@@ -67,7 +67,7 @@ async function harness(t) {
   fileRow.config = { cwd: f.cwd, backend: 'native', diffBasisMaxBytes: 1024 }
   const searchRow = world.config.find(row => row.id === 'search-wsl')
   const readRow = world.config.find(row => row.id === 'read-wsl')
-  assert.ok(readRow, 'the transformed world must mount a native snapshot read')
+  assert.ok(readRow, 'the transformed world must mount the native WSL read tool')
   // These are the generated group and real search file URL. No replacement
   // import(), fake unwrapExports(), or namespace-based ctx.plugin(search).
   await loader.create({ ...world, config: [] })
@@ -102,7 +102,7 @@ async function operate(h, expected = 'AFTER') {
 }
 
 
-test('actual Loader mounts the WSL read tool and replaces three native file RPCs with one', { timeout: 30000 }, async t => {
+test('actual Loader mounts the native window read tool and returns exact content with one RPC', { timeout: 30000 }, async t => {
   const h = await harness(t)
   await h.loader.create(h.fileRow, h.world.id)
   await h.loader.create(h.readRow, h.world.id)
@@ -119,7 +119,7 @@ test('actual Loader mounts the WSL read tool and replaces three native file RPCs
     { number: 1, text: 'snapshot' },
     { number: 2, text: 'from loader' },
   ])
-  assert.deepEqual(captured, ['fs.snapshot'])
+  assert.deepEqual(captured, ['fs.window'])
   assert.equal(pool.diagnostics().pending, 0)
   assert.equal(pool.diagnostics().fallbacks, 0)
 })

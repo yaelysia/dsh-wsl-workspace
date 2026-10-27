@@ -2,6 +2,11 @@
 
 All notable changes to `dsh-wsl-workspace`, newest first. Back to the [README](README.md); the Chinese record is [CHANGELOG.zh.md](CHANGELOG.zh.md).
 
+## 0.7.10 — 2026-10-27
+- **CP20: native read windows.** For WSL-native files, the model-facing `read` now asks the Linux worker to scan and count UTF-8 lines, returning only the requested `offset`/`limit` window instead of transferring the whole file. The original tool schema/rendering, `fs/observed`, version-guarded writes, BOM/CRLF and Windows-drive/UNC fallback remain.
+- The Linux worker performs a fresh file scan on each call, without a persistent index/cache. Its window path can inspect files larger than the full-content 16 MiB cap, while writes/edits and full-content reads retain that limit. New registered-tool parity and Windows→WSL2 performance benchmarks check bounded output and small-file controls. Performance conclusions require measured paired data, not estimated ratios.
+- This release **continues the independently named `dsh-wsl-workspace-enhanced` npm package** introduced in 0.7.9 and uses the corresponding DSH/client bundle identities.
+
 ## 0.7.9 — 2026-10-23
 - Publish this independently maintained fork as `dsh-wsl-workspace-enhanced`, distinct from the upstream npm package.
 - Align the DSH bundle package reference, browser module ID and npm help link with the enhanced package.

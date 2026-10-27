@@ -16,6 +16,9 @@ export interface NativeInfo { version: string; type: 'file' | 'directory' | 'sym
 export interface NativeEntry extends Partial<NativeInfo> { name: string; path: string; type: NativeInfo['type'] }
 export interface NativeWrite { version: string; before: string | null; after: string; operation?: 'create' | 'update' }
 export interface NativeSnapshot { path: string; info: NativeInfo | null; data: Buffer | null }
+export interface NativeWindowLine { number: number; text: string }
+export interface NativeWindow { path: string; fallback: boolean; info: NativeInfo | null;
+  lines: NativeWindowLine[]; totalLines: number; truncatedByBytes: boolean; outOfRange: boolean }
 export interface NativeOptions { signal?: AbortSignal | undefined; timeoutMs?: number | undefined }
 export class NativeFileError extends Error {
   readonly code: FsErrorCode
@@ -221,6 +224,42 @@ export class NativeFileClient {
     const data = decodedReadData(value, NATIVE_MAX_BYTES, true)
     if (data !== null && (value.info as NativeInfo | null)?.type !== 'file') invalid()
     return { path: value.path, info: value.info as NativeInfo | null, data }
+  }
+
+
+  /** One physical Linux open/scan, returning only bounded model-visible lines and fresh observation. */
+  async window(target: RpcTarget, path: string, request: {
+    offset: number; limit: number; maxLineLength: number; maxBytes: number;
+  }, options?: NativeOptions): Promise<NativeWindow | undefined> {
+    // Preserve the existing full-read path for unusually large host-configured
+    // read caps; native windowing intentionally never allocates huge line arrays.
+    if (request.maxLineLength > 65536 || request.maxBytes > 1048576 || request.limit > 100000) return undefined
+    if (!Object.values(request).every(v => Number.isSafeInteger(v) && v > 0)) {
+      throw new NativeFileError('FS_IO_ERROR', 'invalid native read window limits')
+    }
+    const value = await this.call(target, 'fs.window', { path, ...request }, options) as
+      Partial<NativeWindow> | undefined
+    if (!value || !validPath(value.path)) invalid('invalid native window response')
+    if (value.fallback === true) {
+      if (value.info !== undefined || value.lines !== undefined) invalid('invalid native window fallback')
+      return { path: value.path, fallback: true, info: null, lines: [],
+        totalLines: 0, truncatedByBytes: false, outOfRange: false }
+    }
+    if (value.fallback !== undefined || (value.info !== null && !isInfo(value.info))
+      || !Array.isArray(value.lines)
+      || !Number.isSafeInteger(value.totalLines) || (value.totalLines as number) < 0
+      || typeof value.truncatedByBytes !== 'boolean' || typeof value.outOfRange !== 'boolean'
+      || value.lines.length > request.limit) invalid('invalid native window response')
+    if (value.info?.type !== 'file' && (value.lines.length || value.totalLines || value.outOfRange || value.truncatedByBytes)) {
+      invalid('invalid non-file window')
+    }
+    let previous = request.offset - 1
+    for (const line of value.lines) {
+      if (!line || !Number.isSafeInteger(line.number) || line.number !== previous + 1
+        || line.number > value.totalLines! || typeof line.text !== 'string') invalid('invalid native window line')
+      previous = line.number
+    }
+    return value as NativeWindow
   }
 
   async resolve(target: RpcTarget, path: string, options?: NativeOptions): Promise<string> {

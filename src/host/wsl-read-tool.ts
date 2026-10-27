@@ -1,6 +1,6 @@
 /**
  * WSL read with the host tool's exact schema, window and presentation semantics.
- * The only changed execution step is resolve/stat/readText -> fs.readSnapshot.
+ * Native Linux: fs.window returns the requested lines directly; other backends preserve fs.readSnapshot.
  * Source behavior: @deepseek-ai/dsh-tool-fs (MIT; see NOTICE).
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -26,7 +26,12 @@ export const Config: z<Config> = z.object({
 })
 
 interface ReadInfo { target: FsTarget; info: FsInfo | undefined; text?: string }
+interface NativeWindowInfo { target: FsTarget; info: FsInfo | undefined; window: {
+  lines: Line[]; totalLines: number; truncatedByBytes: boolean; outOfRange: boolean;
+} }
 interface FsFace {
+  readWindow?(path: string, options: { cwd?: string; signal?: AbortSignal;
+    offset: number; limit: number; maxLineLength: number; maxBytes: number }): Promise<NativeWindowInfo | undefined>
   readSnapshot(path: string, options: { cwd?: string; signal?: AbortSignal; streamMinSize: number }): Promise<ReadInfo>
   streamText(target: FsTarget, signal?: AbortSignal): Promise<AsyncIterable<string>>
   processPath(target: FsTarget): string
@@ -185,7 +190,12 @@ export function apply(ctx: Context, config: Config = {}): void {
       if (fs === undefined) throw new Error('wsl-read: this world has no filesystem service')
       const directory = ctx.get('workingDirectory') as unknown as WorkingDirectory | undefined
       const cwd = exec.agent === undefined ? undefined : await directory?.ensure(exec.agent, exec.signal)
-      const snapshot = await fs.readSnapshot(input.filePath, {
+      const native = await fs.readWindow?.(input.filePath, {
+        ...cwd === undefined ? {} : { cwd }, signal: exec.signal,
+        offset: input.offset, limit: input.limit,
+        maxLineLength: caps.readMaxLineLength, maxBytes: caps.readMaxBytes,
+      })
+      const snapshot = native ?? await fs.readSnapshot(input.filePath, {
         ...cwd === undefined ? {} : { cwd },
         signal: exec.signal, streamMinSize: caps.readStreamMinSize,
       })
@@ -195,12 +205,16 @@ export function apply(ctx: Context, config: Config = {}): void {
         throw new FsError(`cannot read "${target.displayPath}": not found`, 'FS_NOT_FOUND')
       }
       if (info.type !== 'file') throw new FsError(`cannot read "${target.displayPath}": not a regular file`, 'FS_NOT_REGULAR_FILE')
-      const chunks = info.size === undefined || info.size >= caps.readStreamMinSize
-        ? await fs.streamText(target, exec.signal) : [snapshot.text!]
-      const window = await windowOf(chunks, {
-        offset: input.offset, limit: input.limit,
-        maxLineLength: caps.readMaxLineLength, maxBytes: caps.readMaxBytes,
-      }, target.displayPath)
+      if (native?.window.outOfRange) {
+        throw new FsError(`offset ${input.offset} is out of range for "${target.displayPath}" (${native.window.totalLines} lines)`, 'FS_NOT_FOUND')
+      }
+      const window = native === undefined
+        ? await windowOf(info.size === undefined || info.size >= caps.readStreamMinSize
+          ? await fs.streamText(target, exec.signal) : [(snapshot as ReadInfo).text!], {
+            offset: input.offset, limit: input.limit,
+            maxLineLength: caps.readMaxLineLength, maxBytes: caps.readMaxBytes,
+          }, target.displayPath)
+        : native.window
       const value = { path: fs.processPath(target), offset: input.offset,
         lines: window.lines, totalLines: window.totalLines }
       recordObserved(ctx, target, { kind: 'present', version: info.version }, exec)

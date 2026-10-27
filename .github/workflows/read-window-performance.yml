@@ -1,0 +1,100 @@
+name: read-window-performance
+on:
+  pull_request:
+    paths:
+      - 'src/fs.ts'
+      - 'src/host/wsl-read-tool.ts'
+      - 'src/shared/native-files.ts'
+      - 'src/shared/native-file-worker.ts'
+      - 'src/shared/rpc-worker.ts'
+      - 'src/shared/rpc-metrics.ts'
+      - 'tests/wsl-read-window.test.mjs'
+      - 'tests/wsl-read-snapshot.test.mjs'
+      - 'tests/rpc-loader-entry.test.mjs'
+      - 'scripts/benchmark-read-window.mjs'
+      - 'lib/**'
+      - 'package.json'
+      - '.github/workflows/read-window-performance.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: read-window-${ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  paired:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            wsl: 0
+          - os: windows-latest
+            wsl: 2
+    runs-on: ${ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      WSL_COMPAT_DISTRO: Ubuntu-24.04
+      MSYS_NO_PATHCONV: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: node ci/install-pinned.mjs
+      - uses: Vampire/setup-wsl@v3
+        if: matrix.wsl == 2
+        with:
+          distribution: Ubuntu-24.04
+          additional-packages: python3
+      - name: Verify real WSL2
+        if: matrix.wsl == 2
+        run: |
+          mkdir -p logs
+          current=$(wsl.exe -l -v | tr -d '\0\r' | sed 's/[[:space:]]*$//' | grep -F "$WSL_COMPAT_DISTRO" | grep -oE '[12]$' || true)
+          if [ "$current" != 2 ]; then wsl.exe --set-version "$WSL_COMPAT_DISTRO" 2; fi
+          wsl.exe -l -v | tr -d '\0\r' | tee logs/wsl-version.txt
+          grep -F "$WSL_COMPAT_DISTRO" logs/wsl-version.txt | grep -E '[[:space:]]2$'
+          wsl.exe -d "$WSL_COMPAT_DISTRO" -e uname -r | tee logs/kernel.txt
+      - name: Registered native read window, CP18 snapshot and real Loader, src and lib
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          for plane in src lib; do
+            export DSH_WSL_TEST_PLANE=$plane
+            npm run test:read-window > logs/window-$plane.log 2>&1
+            npm run test:read-snapshot > logs/snapshot-$plane.log 2>&1
+            npm run test:rpc-loader > logs/loader-$plane.log 2>&1
+            tail -10 logs/window-$plane.log
+          done
+      - name: Paired complete registered read vs old snapshot+stream path
+        run: |
+          set -euo pipefail
+          npm run bench:read-window -- --iterations 12 --output logs/read-window-benchmark.json > logs/read-window-benchmark.log 2>&1
+          node --input-type=module <<'NODE'
+          import {readFileSync,writeFileSync} from 'node:fs'
+          const report=JSON.parse(readFileSync('logs/read-window-benchmark.json','utf8'))
+          const rows=report.rows.map(row=>({
+            scenario:row.scenario,bytes:row.fileBytes,
+            oldP50:row.before.wall.p50Ms,newP50:row.after.wall.p50Ms,
+            oldP95:row.before.wall.p95Ms,newP95:row.after.wall.p95Ms,
+            oldRpc:row.before.calls[0],newRpc:row.after.calls[0],
+            oldReceiptBytes:row.before.stdoutBytes[0],newReceiptBytes:row.after.stdoutBytes[0],
+          }))
+          const summary={platform:report.platform,distro:report.distro,iterations:report.iterations,rows,pool:report.pool}
+          writeFileSync('logs/summary.json',JSON.stringify(summary,null,2)+'\n')
+          console.log(JSON.stringify(summary,null,2))
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: read-window-${ matrix.os }}-wsl${ matrix.wsl }}
+          path: logs/
+          retention-days: 14
