@@ -1,0 +1,65 @@
+/**
+ * Linux symlink resolution through the owning distribution.
+ *
+ * The `\\wsl.localhost\<distro>\…` 9P share lists a Linux symlink entry but
+ * cannot resolve its target: `readdir` reports it, and every Windows-side
+ * `stat` on it fails (`ENOENT`/`EISDIR`). The distribution resolves the same
+ * path trivially, so the WSL filesystem's compatibility path asks it with
+ * one short `wsl.exe … readlink -f` call per link.
+ *
+ * Each link gets its own call on purpose: `wsl.exe` drops the arguments that
+ * follow a command (`sh -c 'echo ARGC:$#' sh a b c` answers 0) and its
+ * command-line parser truncates an argument containing a double quote, while a
+ * bare multi-argument `readlink -f a b c` stops at the first path it cannot
+ * resolve and still exits non-zero. A process argument carries any path
+ * without quoting, which is what keeps this correct.
+ *
+ * @module dsh-wsl-workspace/shared/links
+ */
+
+import { execFileResult, textOf, wslExecutableCandidates } from './wsl.ts'
+import { isAbsoluteLinuxPath, joinUnc, parseWslUnc } from './paths.ts'
+
+/** How long the distribution may take to answer one `readlink` call. */
+export const LINK_RESOLVE_TIMEOUT_MS = 10_000
+
+/**
+ * Resolve one Linux symlink the share cannot follow.
+ * @param uncPath - the link, in UNC spelling.
+ * @param wslPath - the `wsl.exe` executable (absolute or PATH name).
+ * @returns the real path as a UNC path, or `undefined` when it does not resolve.
+ */
+export async function resolveLinuxSymlink(
+  uncPath: string,
+  wslPath = 'wsl.exe',
+): Promise<string | undefined> {
+  const unc = parseWslUnc(uncPath)
+  // `readlink` answers one line, which the caller trims: a line break inside
+  // the path itself would come back mangled by that trim.
+  if (unc === null || /[\r\n]/.test(unc.linuxPath)) return undefined
+  try {
+    // `execFileResult` is the callback form on purpose: a host that replaces
+    // `child_process.execFile` with a plain wrapper (DSH Desktop's
+    // `windowsHide` injection) strips the metadata `promisify` needs, and the
+    // promisified call would hand back stdout instead of `{ stdout, stderr }`
+    // — making this silently return `undefined` for every link (issue #35).
+    for (const candidate of wslExecutableCandidates(wslPath)) {
+      try {
+        const output = await execFileResult(
+          candidate,
+          ['-d', unc.distro, '--', 'readlink', '-f', unc.linuxPath],
+          { encoding: 'utf8', timeout: LINK_RESOLVE_TIMEOUT_MS, windowsHide: true },
+        )
+        const target = textOf(output.stdout).trim()
+        return isAbsoluteLinuxPath(target) ? joinUnc(unc.distro, target) : undefined
+      } catch {
+        // try the next spelling of wsl.exe
+      }
+    }
+    return undefined
+  } catch {
+    // Missing intermediate components, an unreadable link, a stopped
+    // distribution or a missing `readlink` all land here.
+    return undefined
+  }
+}
