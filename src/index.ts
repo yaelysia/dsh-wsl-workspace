@@ -201,7 +201,8 @@ function allowedBrowserRequest(req: IncomingMessage): boolean {
     if (typeof origin !== 'string') return false
     try {
       const parsed = new URL(origin)
-      if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+      const requestProtocol = 'encrypted' in req.socket && req.socket.encrypted === true ? 'https:' : 'http:'
+      if (parsed.protocol !== requestProtocol
         || parsed.username !== '' || parsed.password !== ''
         || parsed.host.toLowerCase() !== req.headers.host?.toLowerCase()) return false
     } catch { return false }

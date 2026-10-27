@@ -182,7 +182,7 @@ try {
   })
   assert(sameOrigin.status === 200 && sameOrigin.envelope?.ok === true,
     'same-origin browser JSON request remains usable')
-  for (const origin of ['https://evil.example.com', 'null', `http://127.0.0.1:${port + 1}`]) {
+  for (const origin of ['https://evil.example.com', 'null', `http://127.0.0.1:${port + 1}`, `https://127.0.0.1:${port}`]) {
     const rejected = await post({ method: 'setUser', params: { path: '\\\\wsl.localhost\\\\Ubuntu\\\\x', username: 'root' } }, {
       headers: { origin },
     })

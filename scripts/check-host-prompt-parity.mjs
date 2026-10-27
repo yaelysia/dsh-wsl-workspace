@@ -10,9 +10,8 @@
 // way that hid a shipped defect: the gate injected an uppercase `'DSH> '` while the host
 // compares against lowercase `"dsh> "`, so the gate could never have observed the
 // contract arriving — issue #51 point 2 stayed green through it. A hand copy of a fact
-// that lives in another package is the same class of thing this repo already gates for
-// the skill ranks (scripts/check-rank-parity.mjs), so it gets the same treatment here:
-// one declaration in src/shared/wsl-env.ts, and this gate compares it to the host.
+// that lives in another package needs a single local declaration and an independent
+// strict check: one declaration in src/shared/wsl-env.ts, compared with the host here.
 //
 // The default is strict: an unresolvable host package is NOT VERIFIED and exits 1, because
 // "nothing to compare" must not look like "nothing drifted". `--lenient` downgrades that

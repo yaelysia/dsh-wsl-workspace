@@ -288,7 +288,7 @@ maintainer-machine deep tool. Drive a case with:
 
 ```powershell
 scripts/compatibility/Prepare-Case.ps1 -Version 0.1.5-rc.2 ...   # build the case
-scripts/compatibility/Start-Case.ps1 ... ; Run-Checks.ps1 ...    # boot + 15 checks
+scripts/compatibility/Start-Case.ps1 ... ; Run-Checks.ps1 ...    # boot + 18 checks
 scripts/compatibility/Stop-Case.ps1 ; Check-Uninstall.ps1 ...    # stop + uninstall probe
 ```
 
@@ -301,7 +301,7 @@ npm run test:compat -- 0.2.0-rc.2 0.1.7-rc.2   # PLUGIN_REF=<tarball> to test an
 
 Nine checks need a live WSL distribution (`fs-real`, `relay-real`,
 `relay-profile-real`, `tool-bash-real`,
-`bash-session-real`, `bash-parity-real`, `search-real`, and `conpty-relay`); they build their own
+`bash-session-real`, `bash-parity-real`, `search-real`, `host-api`, and `conpty-relay`); they build their own
 fixtures under `/tmp/dsh-wsl-compat` (override with `WSL_COMPAT_ROOT`, and the distribution with
 `WSL_COMPAT_DISTRO`) and remove them again. `bash-parity-real` writes its spill files under the
 system temp directory and compares **two tools against each other**, so a difference that nobody

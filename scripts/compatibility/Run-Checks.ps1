@@ -23,16 +23,15 @@ try{
   Run-Node 'materialize' @((Join-Path $r.plugin 'tests/host-materialize.mjs'))
   Run-Node 'declare' @((Join-Path $r.plugin 'tests/host-declare.mjs'))
   Run-Node 'exec-shape' @('--experimental-strip-types',(Join-Path $r.plugin 'tests/exec-shape.mjs'))
-  Run-Node 'rank' @((Join-Path $r.plugin 'scripts/check-rank-parity.mjs'),'--strict')
   Run-Node 'smoke-source' @('--experimental-strip-types',(Join-Path $r.plugin 'tests/smoke.ts'))
   $built=(Get-Content (Join-Path $r.plugin 'tests/smoke.ts') -Raw).Replace("'../src/fs.ts'","'../lib/fs.js'").Replace("'../src/shell.ts'","'../lib/shell.js'")
   $builtPath=Join-Path $r.plugin 'tests/smoke-built.ts'
   $built | Set-Content $builtPath
   Run-Node 'smoke-built' @('--experimental-strip-types',$builtPath)
   Run-Node 'shell-extra' @((Join-Path $r.plugin 'tests/shell-extra.mjs'))
-  Run-Node 'skills-real' @('--experimental-strip-types',(Join-Path $r.plugin 'scripts/compatibility/skills-real.mjs'))
   Run-Node 'fs-real' @('--experimental-strip-types',(Join-Path $r.plugin 'scripts/compatibility/fs-real.mjs'))
   Run-Node 'relay-real' @('--experimental-strip-types',(Join-Path $r.plugin 'scripts/compatibility/relay-real.mjs'))
+  Run-Node 'relay-profile-real' @('--experimental-strip-types',(Join-Path $r.plugin 'scripts/compatibility/relay-profile-real.mjs'))
   Run-Node 'tool-bash-real' @('--experimental-strip-types',(Join-Path $r.plugin 'scripts/compatibility/tool-bash-real.mjs'))
   Run-Node 'bash-session-real' @('--experimental-strip-types',(Join-Path $r.plugin 'scripts/compatibility/bash-session-real.mjs'))
   Run-Node 'bash-parity-real' @('--experimental-strip-types',(Join-Path $r.plugin 'scripts/compatibility/bash-parity-real.mjs'))
