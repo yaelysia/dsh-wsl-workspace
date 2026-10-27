@@ -65,6 +65,8 @@ workflow's `lint-build` job, and it is registered in bucket A of
 
 ## Performance work
 
+[CP20 native read-window optimization](./performance-cp20.md): merged v0.7.10 registered WSL `read` implementation, exact Linux/Windows→WSL2 paired benchmarks, small-file negatives, CI and scope.
+
 [Phase-one search and monitor changes](./performance-phase1.md): scope, repeatable benchmarks, and boundaries that remain.
 
 [Experimental phase-two persistent search](./performance-phase2.md): opt-in transport, bounds, fallback, native tests and unverified Windows scope.
