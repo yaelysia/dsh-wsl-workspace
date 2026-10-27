@@ -19,7 +19,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: read-window-${ github.head_ref || github.ref_name }}
+  group: read-window-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
   paired:
@@ -31,7 +31,7 @@ jobs:
             wsl: 0
           - os: windows-latest
             wsl: 2
-    runs-on: ${ matrix.os }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     defaults:
       run:
@@ -95,6 +95,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: read-window-${ matrix.os }}-wsl${ matrix.wsl }}
+          name: read-window-${{ matrix.os }}-wsl${{ matrix.wsl }}
           path: logs/
           retention-days: 14
