@@ -154,6 +154,8 @@ The authoritative declaration is in [`package.json`](package.json); see
 
 ## Limits and recovery
 
+**Scope:** WSL variants intentionally do not install, discover, refresh or invoke Skills. This plugin handles WSL workspaces and their Bash/file/search tools only; ordinary DSH modes are unaffected.
+
 - A full native file read, write or exact edit is limited to **16 MiB**; larger reads can use ranges or streaming.
 - Writes use Linux-side path checks, version guards and atomic publication where supported. These are **not** a complete OS sandbox or a universal protection against unrelated external writers.
 - After a disconnect during a mutation, its outcome may be unknown. **Read the file before deciding whether to retry.**
