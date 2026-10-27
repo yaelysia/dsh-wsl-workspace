@@ -480,6 +480,7 @@ let report = {}
 try {
   const response = await fetch('http://127.0.0.1:' + port + '/api', {
     method: 'POST',
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ method: 'listDistros' }),
     signal: AbortSignal.timeout(20000),
   })
