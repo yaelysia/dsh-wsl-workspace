@@ -355,6 +355,9 @@ let variantOutcome: VariantOutcome = {
 function writeVariantOutcome(
   next: Omit<VariantOutcome, 'failed' | 'truncated' | 'at'> & { failed: VariantFailure[] },
 ): void {
+  // An old registration pass may finish after a profile reload. Never let
+  // that older pass replace the current boot's state.
+  if (next.generation !== variantGeneration) return
   const kept = next.failed.slice(0, MAX_VARIANT_FAILURES)
   variantOutcome = {
     state: next.state,
@@ -859,8 +862,11 @@ async function materializeVariants(
   persistentShell: boolean,
   track: (dispose: unknown) => void,
   generation: number,
+  isCurrent: () => boolean,
 ): Promise<void> {
+  if (!isCurrent()) return
   const presets = await agentPresets.list().catch((error: unknown) => {
+    if (!isCurrent()) throw error
     // An unreadable roster is a boot-level failure: no source was counted, so no
     // count is reported. The cause rides along in `error` for the dialog's boot
     // line, and the throw is rethrown unchanged — the caller's own handling stays
@@ -872,9 +878,10 @@ async function materializeVariants(
       failed: [],
       generation,
     })
-    variantOutcome = { ...variantOutcome, error: messageOf(error) }
+    if (isCurrent()) variantOutcome = { ...variantOutcome, error: messageOf(error) }
     throw error
   })
+  if (!isCurrent()) return
   const userRoot = join(dshHome, '.agent-presets')
   const generated = new Set<string>()
   // A broken roster entry is not this generator's to interpret, and a `wsl-*` entry
@@ -890,11 +897,14 @@ async function materializeVariants(
   // the values carry both, and `.size`/`.has` mean the sweep below is unchanged.
   const retained = new Map<string, VariantFailure>()
   for (const preset of sources) {
+    if (!isCurrent()) return
     const variantId = variantIdFor(preset.id)
     try {
-      await materializeOne(agentPresets, preset, userRoot, paths, persistentShell, track, generated)
+      await materializeOne(agentPresets, preset, userRoot, paths, persistentShell, track, generated, isCurrent)
+      if (!isCurrent()) return
       produced += 1
     } catch (error) {
+      if (!isCurrent()) return
       // Until #47 a single failing source aborted this loop: on a real profile that
       // could not parse one composition, the roster ended with no variant at all AND
       // with the sweep below unrun, so the leftovers the report read as the symptom
@@ -904,6 +914,7 @@ async function materializeVariants(
       console.error(`dsh-wsl-workspace: WSL variant ${variantId} was not published — ${messageOf(error)}`)
     }
   }
+  if (!isCurrent()) return
   // The log line says nothing about WHICH variant failed, and on DSH Desktop stdout
   // is not persisted — so the reason also becomes a route-readable fact (#52).
   writeVariantOutcome({
@@ -957,9 +968,12 @@ async function materializeOne(
   persistentShell: boolean,
   track: (dispose: unknown) => void,
   generated: Set<string>,
+  isCurrent: () => boolean,
 ): Promise<void> {
+  if (!isCurrent()) return
   const variantId = variantIdFor(preset.id)
   const composition = await readPresetComposition(agentPresets, preset)
+  if (!isCurrent()) return
   const transformed = transformPresetForWsl(composition.content, paths.shell, paths.fs, persistentShell ? {
     relayPath: paths.relay,
     nodePath: paths.node,
@@ -974,6 +988,7 @@ async function materializeOne(
   // a directory under the roster's scanned user root.
   if (typeof agentPresets.register === 'function') {
     const plugins = await parseVariantComposition(transformed)
+    if (!isCurrent()) return
     // A shipped mode keeps its bilingual label; a custom preset keeps the
     // display name it published, falling back to its id.
     const declaration: PresetDeclaration = {
@@ -986,6 +1001,7 @@ async function materializeOne(
     track(await agentPresets.register(declaration))
     return
   }
+  if (!isCurrent()) return
   if (preset.path === undefined) {
     throw new Error(`agentPresets: roster entry "${preset.id}" carries no path on this release`)
   }
@@ -1103,6 +1119,7 @@ export function apply(ctx: Context, config: Config): void {
       // Claimed before the first await so the catch below can tell this boot's
       // failure from the previous boot's outcome.
       const myGeneration = ++variantGeneration
+      const isCurrent = () => !stopped && variantGeneration === myGeneration
       const track = (dispose: unknown): void => {
         if (typeof dispose !== 'function') return
         const retire = dispose as () => Promise<void>
@@ -1114,6 +1131,7 @@ export function apply(ctx: Context, config: Config): void {
       }
       void (async () => {
         const probe = await supportsPersistentShell(ctx)
+        if (!isCurrent()) return
         // The PTY backend starts `shellPath` with `shellArgs`, so the relay's
         // interpreter is this plugin's one choice in that stack. It has to be a
         // real node: on DSH Desktop `process.execPath` is the Electron
@@ -1121,6 +1139,7 @@ export function apply(ctx: Context, config: Config): void {
         // all — which is the "PTY shell exited during startup" failure of
         // issue #40. See `src/shared/relay-node.ts`.
         const relay = probe.ok ? await resolveRelayNode() : undefined
+        if (!isCurrent()) return
         let persistentShell = persistentShellAllowed(probe.ok, relay)
         // Which persistent shell the world mounts. The pipe-driven session is the default: the
         // PTY-backed one hangs every call the moment the shell repaints the sentinel line
@@ -1178,6 +1197,7 @@ export function apply(ctx: Context, config: Config): void {
             console.log(`dsh-wsl-workspace: persistent shell: readiness probe passed — ${readiness.detail}`)
           }
         }
+        if (!isCurrent()) return
         await materializeVariants(agentPresets, dshHome, {
           shell: shellPath,
           fs: fsPath,
@@ -1193,8 +1213,9 @@ export function apply(ctx: Context, config: Config): void {
           image: imagePath,
           read: readPath,
           shellMode,
-        }, persistentShell, track, myGeneration)
+        }, persistentShell, track, myGeneration, isCurrent)
       })().catch((error) => {
+        if (!isCurrent()) return
         // Variant generation is best-effort over a live roster: a missing or
         // unreadable source preset must not take the whole plugin down, but
         // the failure is surfaced loudly rather than hidden.
@@ -1204,9 +1225,9 @@ export function apply(ctx: Context, config: Config): void {
         if (variantOutcome.generation !== myGeneration) {
           writeVariantOutcome({
             state: 'failed',
-            produced: variantOutcome.produced,
-            sources: variantOutcome.sources,
-            failed: variantOutcome.failed,
+            produced: 0,
+            sources: 0,
+            failed: [],
             generation: myGeneration,
           })
           variantOutcome = { ...variantOutcome, error: messageOf(error) }
