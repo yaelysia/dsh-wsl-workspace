@@ -6,9 +6,10 @@ import { test } from 'node:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { load } from '../scripts/compatibility/plane.mjs'
+import { pathToFileURL } from 'node:url'
+import { resolve } from 'node:path'
 
-const apply=(await load('index')).apply
+const apply=(await import(pathToFileURL(resolve('lib/index.js')).href)).apply
 const tick=()=>new Promise(r=>setTimeout(r,10))
 const until=async(predicate)=>{
   for(let i=0;i<1000;i++){if(predicate())return;await tick()}

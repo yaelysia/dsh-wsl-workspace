@@ -46,7 +46,6 @@ const LOCATIONS = {
   'wsl-terminal-tool': { src: 'src/host/wsl-terminal-tool.ts', lib: 'lib/wsl-terminal-tool.js' },
   'wsl-image-tool': { src: 'src/host/wsl-image-tool.ts', lib: 'lib/wsl-image-tool.js' },
   'wsl-read-tool': { src: 'src/host/wsl-read-tool.ts', lib: 'lib/wsl-read-tool.js' },
-  skills: { src: 'src/host/wsl-skills.ts', lib: null },
 }
 
 /** The repo-relative specifier for one subject module on the active plane. */

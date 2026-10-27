@@ -20,7 +20,7 @@ This document describes how to verify `dsh-wsl-workspace` after a change or befo
 Run the unit tests from the plugin directory:
 
 ```powershell
-node --experimental-strip-types --test tests/variants.test.ts tests/fs-execution-context.test.ts tests/shell.test.ts tests/paths.test.ts tests/wsl-skills.test.ts
+node --experimental-strip-types --test tests/variants.test.ts tests/fs-execution-context.test.ts tests/shell.test.ts tests/paths.test.ts
 ```
 
 Coverage:
@@ -31,11 +31,9 @@ Coverage:
 | `tests/fs-execution-context.test.ts` | `WslFileSystem` inherits the calling session's cwd through `AsyncLocalStorage` on `tools/execute`; agentless calls fall back to the configured distro. |
 | `tests/shell.test.ts` | The login-shell `cd` prefix preserves the resolved workdir (including single-quote escaping); non-login shells leave the command unchanged. |
 | `tests/paths.test.ts` | UNC ↔ Linux path translation, `/mnt/<drive>` mapping, canonical Windows path keys, WSL username validation. |
-| `tests/wsl-skills.test.ts` | The WSL skill provider (issue #10): non-WSL lookups return nothing, nested `.dsh/skills` / `.agents/skills` discovery with host ranks/sources, `get()` body loading, pruning of `node_modules` / dot-directories, frontmatter validation **including block scalars**, depth and skill-root budgets, the nearest-`.git`-ancestor rule (a cwd deeper than the project root still sees the project's skills, and skills above that ancestor do not leak), the skill-root cap, the **10-second per-scan-root lookup cache** (copy semantics, TTL expiry, `get()` staying live), **directory-symlink following** (linked projects discovered, aliasing deduplicated, dangling symlinks pruned, hops bounded by depth). |
 
 ## Provider parity and compatibility checks
 
-- `node scripts/check-rank-parity.mjs` — the provider's project ranks are copied from `@deepseek-ai/dsh-skill-filesystem` (the host does not export them). This script parses the host's built lib when the package is resolvable on this machine and fails on drift. Strict by default: no resolvable host package is `NOT VERIFIED` and exits 1 (pass `--lenient` for the old warning-and-skip, `--host FILE` to compare against one explicit bundle). Run it before every release on a machine with the harness installed.
 - `node ci/install-pinned.mjs --verify-only` — compares every pin in `ci/pinned-deps.json` against the tree that is already installed, without writing a manifest, running npm or linking anything. Use it as the read-only probe when you need to prove the version comparison bites; installing against a changed pin rewrites `ci/deps/`, which on the maintainer machine is a junction into the live profile.
 - `scripts/verify-dsh-compat.sh <version>...` — disposable-Profile install/start/uninstall evidence against specific `@deepseek-ai/dsh` releases: fully isolated (`DSH_HOME` redirected to a temp tree, own port), boots the published harness version with the plugin added by name, probes `POST /wsl-workspace/api`, then removes the plugin and verifies the route disappears. Emits per-version verdict lines used for the `dsh.compatibility.dshReleases` manifest records.
 
@@ -90,33 +88,9 @@ client configurations share `lib/` as their output directory, so without it ever
 code-split chunk an earlier build emitted stays in the tree (and, once a file is
 renamed, ships in the tarball as dead weight).
 
-## Nested skill-catalog regression (issue #10)
+## WSL Skills explicitly out of scope (v0.7.11)
 
-The WSL skill provider publishes `.dsh/skills` / `.agents/skills` from nested projects below a WSL workspace (and from the cwd's nearest `.git` ancestor). Regression-test it on the real 9P share:
-
-1. Rebuild the repro tree inside the distribution (`scripts/repro-setup.sh` creates `~/repro-ws-root` with nested projects, pruned traps, and an over-budget deep skill):
-
-   ```powershell
-   cp scripts/repro-setup.sh //wsl.localhost/<distro>/tmp/
-   wsl -d <distro> -- bash -c "bash /tmp/repro-setup.sh"
-   ```
-
-2. Drive the provider against the real `\\wsl.localhost` share — ten assertions, all `node:assert/strict`, non-zero exit on any failure (workspace-root cwd finds its own skill **and** the nested projects, the pruned trees stay absent, every entry carries a source and a rank, nested-project cwd finds its own project and **not** a sibling's, `get()` returns a non-empty body for the entry asked for, a non-WSL cwd returns nothing). This file previously *printed* four listings and exited 0 whatever they contained, while this document described those prints as assertions — measured, `grep -cE 'assert|throw|exit'` on the old 34 lines returned 0.
-
-   ```powershell
-   node scripts/repro-e2e.mjs
-   ```
-
-   The target defaults to `\\wsl.localhost\<distro>\home\<user>\repro-ws-root`; override the distro/user with `WSL_COMPAT_DISTRO` / `WSL_COMPAT_USER` and the tree location with `WSL_REPRO_ROOT` (no path editing needed).
-   Two Git Bash traps, both hit on the maintainer machine while re-establishing this run: a bare
-   `wsl.exe -d <distro> -- bash /tmp/repro-setup.sh` has its `/tmp/…` argument rewritten to the
-   Windows temp directory (run it through `bash -c "…"` instead, as above), and
-   `WSL_REPRO_ROOT=/home/…` is rewritten the same way by MSYS, so prefix the run with
-   `MSYS_NO_PATHCONV=1`. The second one is silent and total: the UNC becomes
-   `…\C:\Users\…\.qoder-cn\bin\git\home\…`, the listing comes back empty, and — before this
-   change — the script still exited 0.
-3. In the running harness, open a session on the repro workspace and ask the agent to load the nested skills (`brainstorming`, `systematic-debugging`, `writing-plans`) through its skill tool — each must load with the `wsl-workspace` provider attribution, and no duplicate entries may appear. In a non-WSL workspace session the same skills must be "unknown".
-4. Clean-install check (simulates another user): `npm pack`, `npm install <tarball>` in an empty temp project (peers must resolve), then `dsh plugin --profile web add <extracted tarball dir>`, restart `dsh web`, and repeat the end-to-end checks below plus the nested-skill probe above.
+This plugin does not mount or provide WSL Skills discovery or use. Verify the generated variants **omit** source Skills tool/provider rows, while preserving unrelated plugins, with `tests/variants.test.ts` and the host declaration/materialization gates.
 
 ## End-to-end verification in the running harness
 
@@ -148,7 +122,7 @@ items**, not just the harness checks: (1) the dialog lists the distributions and
 "Create & open" produces a session, (2) a file-tool write, (3) a file-tool read,
 (4) `bash` one-shot *and* its persistence across two separate calls (record which of the
 two it is — `0.1.0-rc.7` has no Windows process inspector and keeps a one-shot shell),
-(5) `skills` loading a fixture skill and reporting its token, and (6) the frontend
+(5) the frontend
 open/reload check in step 7 above. Re-read the written file independently on the Linux
 side (`wsl.exe … cat`), and keep `web.err` at 0 bytes. The version *count* is conditional
 (spread it out before a release or when asked); the six items are not.
@@ -290,16 +264,14 @@ deadline the caller chose arrives.
 ## Release checklist
 
 1. `pnpm build` — clears `lib/`, rebuilds it, and runs the verification gate.
-2. `node --experimental-strip-types --test tests/*.test.ts` — all green (locales, variants, paths, shell, fs execution context, fs policy, wsl skills, wsl search).
+2. `node --experimental-strip-types --test tests/*.test.ts` — all green (locales, variants, paths, shell, fs execution context, fs policy, wsl search).
 3. `node tests/host-materialize.mjs` — all assertions pass (the directory channel).
 4. `node tests/host-declare.mjs` — all assertions pass (the declaration channel).
    - `node ci/install-pinned.mjs && npm run test:profile` — every arm green (issue #47: profile-shaped trees laid out by Node's own resolution, the hostile `js-yaml` major from `ci/deps-conflict`, one unreadable source among healthy ones). This is the CI step placed after `verify:install`, so a red there silences no other gate; its premise lines P1–P7 must stay green, because a red on one of those is the fixture, never the product.
 5. `node --experimental-strip-types tests/smoke.ts` — real-WSL round-trip passes.
-6. `node scripts/check-rank-parity.mjs` — host rank constants still match our copies.
-7. `node scripts/repro-e2e.mjs` (after `scripts/repro-setup.sh`) — nested skill-catalog assertions pass.
 8. `npm pack --dry-run` — confirm the tarball carries only live `lib/` chunks, `cordis.patch.yml`, the READMEs, `TESTING.md`, both CHANGELOGs, `LICENSE`, and `NOTICE`. It does **not** carry `src/` or the screenshots: measured 2026-10-09 with `npm pack --ignore-scripts` over a pristine `git archive` export, `files` including them yields 79 members / 2,757,545 B and excluding them 47 members / 492,454 B, and the only difference between the two member lists is those 32 entries. The nine READMEs' screenshots are absolute `raw.githubusercontent.com/…` URLs so the npm page renders without the bytes; `lib/` is what the host loads, and nothing that reads `src/**` reads it from an installed copy.
 9. `npm run verify:install` — packs the tree and installs the tarball with **plain npm** into a scratch directory, with no pnpm and no host packages present. This is the gate that would have caught 0.7.0, whose `peerDependencies` made npm auto-install an unpublished package (`E404 @deepseek-ai/dsh-retention`): every other check and every real session goes through `dsh plugin add` (pnpm), which only *warns* about unmet peers and installs anyway. `prepublishOnly` runs it, so `npm publish` now refuses to ship a package that npm users cannot install.
-10. Install the tarball into a clean profile (`dsh plugin --profile web add <tarball>`), restart `dsh web`, and run the end-to-end checks above plus the nested-skill probe. When the compatibility manifest changes, also run `scripts/verify-dsh-compat.sh` for every declared release.
+10. Install the tarball into a clean profile (`dsh plugin --profile web add <tarball>`), restart `dsh web`, and run the end-to-end checks above without the retired Skills probe. When the compatibility manifest changes, also run `scripts/verify-dsh-compat.sh` for every declared release.
 11. For a release, install the *published* version by name into one isolated case per declared release and confirm each boots (the launcher only reports ready once the plugin's API route answers) — the check that proves the artifact on the registry, not just the local tree.
 12. For a release, drive the **six-item frontend pass** on every declared release (see "The compatibility pass on every declared release" above), and — when the `wsl.exe` call path changed — the Desktop-wrapper comparison as well. When the persistent-shell path changed (the relay, its interpreter, or the PTY rows the variant generates), also run the Desktop PTY simulation above.
 13. Confirm the artifact identity before publishing: the tarball from the release path, a fresh `npm pack`, and `npm pack --ignore-scripts` over the committed `lib/` must hash identically, and `npm run verify:install` must print `verify-install: OK`. This is now machine-run: `npm run verify:artifact` (ci.yml#lint-build) packs all three ways and compares them.
@@ -327,7 +299,7 @@ weekly), use the Git-Bash driver instead — no PowerShell needed:
 npm run test:compat -- 0.2.0-rc.2 0.1.7-rc.2   # PLUGIN_REF=<tarball> to test an unpublished commit
 ```
 
-Nine checks need a live WSL distribution (`skills-real`, `fs-real`, `relay-real`,
+Nine checks need a live WSL distribution (`fs-real`, `relay-real`,
 `relay-profile-real`, `tool-bash-real`,
 `bash-session-real`, `bash-parity-real`, `search-real`, and `conpty-relay`); they build their own
 fixtures under `/tmp/dsh-wsl-compat` (override with `WSL_COMPAT_ROOT`, and the distribution with
@@ -378,7 +350,6 @@ tree, and `--record` refuses while a banned violation stands.
 ## Phase-one performance regressions
 
 - `npm run test:unit` includes `tests/search-patterns.test.ts` (no host packages).
-- `npm run test:win32` includes monitor eviction/disposal races in `tests/wsl-skills.test.ts`.
 - `npm run test:search-prefilter` executes the production GNU scripts on Linux or real WSL on Windows (`WSL_COMPAT_DISTRO`, default `Ubuntu`). It is also called by `test:node`. The existing WSL CI matrix exercises selective queries through the registered tools in `search-real.mjs`, on both source and built-artifact planes.
 - `npm run bench:search -- --distro Ubuntu --files 1000 --iterations 10` emits JSON P50/P95 and raw stdout bytes for a warmed native-script A/B. It creates and removes its own `/tmp/dsh-search-perf-*` fixture; it does not touch a user workspace or time model inference.
 
