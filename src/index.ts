@@ -194,6 +194,24 @@ function messageOf(value: unknown): string {
   return value instanceof Error ? value.message : String(value)
 }
 
+/** Only a same-origin browser, or a non-browser JSON client, may call the local control route. */
+function allowedBrowserRequest(req: IncomingMessage): boolean {
+  const origin = req.headers.origin
+  if (origin !== undefined) {
+    if (typeof origin !== 'string') return false
+    try {
+      const parsed = new URL(origin)
+      if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+        || parsed.username !== '' || parsed.password !== ''
+        || parsed.host.toLowerCase() !== req.headers.host?.toLowerCase()) return false
+    } catch { return false }
+  }
+  // A cross-site browser may forge a simple form POST, but cannot send
+  // application/json without CORS preflight. Reject both modes independently.
+  const site = req.headers['sec-fetch-site']
+  return site === undefined || site === 'same-origin' || site === 'none'
+}
+
 /** Write one JSON envelope. */
 function json(res: ServerResponse, status: number, body: Envelope<unknown>): void {
   res.writeHead(status, {
@@ -1266,6 +1284,14 @@ export function apply(ctx: Context, config: Config): void {
       }
       if (req.method !== 'POST') {
         json(res, 405, { ok: false, error: 'method not allowed' })
+        return
+      }
+      if (!allowedBrowserRequest(req)) {
+        json(res, 403, { ok: false, error: 'same-origin only' })
+        return
+      }
+      if (!/^application\/json\s*(?:;|$)/i.test(req.headers['content-type'] ?? '')) {
+        json(res, 415, { ok: false, error: 'application/json required' })
         return
       }
       let body: Record<string, unknown>

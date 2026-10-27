@@ -353,8 +353,8 @@ function withoutSkillRows(lines: readonly string[]): string[] {
     const plugin = /^\s*name:\s*['"]?(@deepseek-ai\/dsh-(?:tool-)?skill(?:-[A-Za-z0-9_-]+)?)['"]?\s*$/.exec(ownName ?? '')?.[1]
     const isSkill = match[2] === 'skill-filesystem' || match[2] === 'tool-skill'
       || plugin !== undefined
-    if (!isSkill) output.push(...block)
-    index = end
+    if (isSkill) index = end
+    else { output.push(line); index++ }
   }
   return output
 }

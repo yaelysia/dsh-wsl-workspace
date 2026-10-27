@@ -125,30 +125,14 @@ export class WslFileSystem extends LocalFileSystem {
   }
 
   /**
-   * No-replace publication for filesystems without hard links. A real
-   * collision (a concurrent external creator won) must still surface as the
-   * original EEXIST so the guarded-create failure path classifies it; an
-   * absent target falls back to rename, which on Windows publishes without
-   * replacing anything. Safe against this backend's own writers because the
-   * per-target lock serializes them.
-   * @param tempPath - the staged file.
-   * @param destPath - the destination to create.
+   * Atomic no-replace publication: hard-link creation either claims the
+   * destination or fails without modifying it. An unsupported filesystem
+   * must fail closed — lstat(absent) followed by Windows rename(REPLACE_EXISTING)
+   * could overwrite a file created by an external process in between.
+   * The caller retains the staged file and its own cleanup/guard contract.
    */
   private static async publishNoReplace(tempPath: string, destPath: string): Promise<void> {
-    try {
-      await link(tempPath, destPath)
-      return
-    } catch (error) {
-      let exists = false
-      try {
-        await lstat(destPath)
-        exists = true
-      } catch {
-        // Absent destination: rename publishes the staged file.
-      }
-      if (exists) throw error
-      await rename(tempPath, destPath)
-    }
+    await link(tempPath, destPath)
   }
 
   /**

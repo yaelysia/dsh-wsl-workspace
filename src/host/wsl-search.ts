@@ -27,7 +27,7 @@
  * Engine notes, both honest and documented in the UI:
  *  - `grep` asks the distribution's GNU grep (`grep -rnIE -Z`), present on every
  *    mainstream distribution and requiring no installation. Its dialect is POSIX
- *    ERE — `\d`, `\w`, `\b` and `(?i)` work, lookaround and backreferences do
+ *    ERE — `\d`, `\w` and `\b` work; inline `(?i)`, lookaround and backreferences do
  *    not — and it has no `.gitignore` support, so hidden entries and
  *    `node_modules` are excluded explicitly while git-ignored files are still
  *    searched.
@@ -835,7 +835,7 @@ function registerGrep(ctx: Context, tools: ToolsRegistryFace, config: ResolvedCo
       pattern: {
         type: 'string',
         required: true,
-        description: 'Regular expression to search for (GNU grep -E syntax: \\d, \\w, \\b and (?i) work; lookaround and backreferences do not).',
+        description: 'GNU grep -E regular expression (supports \\d, \\w, \\b; no (?i) inline modifiers, lookaround or backreferences).',
       },
       path: {
         type: 'string',
