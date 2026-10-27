@@ -31,8 +31,6 @@ import { subjectExists } from './derive.mjs'
 import { hostConst, objectBody, packageVersion, panelLines, panelText, read, registeredToolNames, sessionShellDefault } from './derive.mjs'
 import { findClaims, quote, statesNumberVerdict } from './assertions.mjs'
 
-const SKILLS = 'src/host/wsl-skills.ts'
-
 /**
  * Sentences that deny `bash` has a `run_in_background` parameter — the shape that shipped wrong.
  * A directional predicate: "`bash` is a PTY-backed shell…" does not match, and neither does a
@@ -59,26 +57,6 @@ const namesTheOptIn = line => line.includes('DSH_WSL_PTY_SHELL')
 const scopesTheParameterItself = line =>
   /(只有在|only |only under|opt[ -]?in)[^。.]{0,40}(那一档|档|tier|this parameter|the parameter)/i.test(line)
   || /run_in_background[^。.]{0,40}(只有在|only)/i.test(line)
-
-/**
- * Sentences that claim a cache lifetime. The skills provider has no TTL: it re-checks on a poll
- * cadence, so any "cached for N seconds" wording describes a mechanism that was replaced.
- *
- * A claim about the lifetime has to survive its own negation, because **the negation is how the
- * debt gets paid**: a maintainer following `repair` may well write "not cached for 10 seconds — it
- * re-checks every 3 s", which is correct and was previously reported as a fresh instance of the
- * defect. `deniesTheLifetime` is that exemption, and it is narrow on purpose: it wants a negation
- * of *this* mechanism, not any sentence that happens to contain the word.
- */
-const CLAIMS_CACHE_TTL = [
-  /缓存\s*\d+\s*秒/,
-  /cached[^.]{0,40}for\s*\d+\s*seconds?/i,
-]
-
-/** A sentence that denies having a cache lifetime, rather than asserting one. */
-const deniesTheLifetime = line =>
-  /(不|没有|无|不再|并非|没有)\s*(缓存|cached?)/i.test(line)
-  || /\bnot\s+cached\b|\bno\s+cache\b|\bnever\s+cached\b/i.test(line)
 
 /**
  * Does the mounted `bash` tool declare `run_in_background`?
@@ -121,8 +99,8 @@ async function panels() {
  * A claim, plus the sentences it is *about* — asserted to be present before its own verdict counts.
  *
  * This is the completeness half, and it exists because half of the claims here assert an
- * **absence**: "no sentence makes PTY the provider of `bash`", "no sentence claims a cache
- * lifetime". An absence is vacuously satisfied by an empty document, so deleting the panel would
+ * **absence**: "no sentence makes PTY the provider of `bash`". An absence is
+ * vacuously satisfied by an empty document, so deleting the panel would
  * silence exactly the claims that police it. A claim whose subject is gone is not satisfied, it is
  * unanswerable — and this repository treats unanswerable as red, the same way
  * `check-host-prompt-parity.mjs` treats "could not compare" as drift rather than as agreement.
@@ -172,12 +150,6 @@ function defineClaim({ id, issue, debt = null, requires = [], run, ...carried })
  * and it belongs here; remove a claim and its entry here reddens.
  */
 export const WATCHED_CONSTANTS = [
-  ['src/host/wsl-skills.ts', 'MAX_SCAN_DEPTH', 'the panel states the scan depth'],
-  ['src/host/wsl-skills.ts', 'MAX_SKILL_ROOTS', 'the panel states the number of skill directories'],
-  ['src/host/wsl-skills.ts', 'MAX_VISITED_DIRECTORIES', 'the panel states the visited-directory cap'],
-  ['src/host/wsl-skills.ts', 'MAX_LINK_RESOLUTIONS', 'the panel states the per-lookup link cap'],
-  ['src/host/wsl-skills.ts', 'REFRESH_POLL_MS', 'the panel states the re-check cadence'],
-  ['src/host/wsl-skills.ts', 'DISCOVERY_POLL_MS', 'the panel states the re-discovery cadence'],
   ['src/shared/wsl-stdin.ts', 'STDIN_CAP_BYTES', 'the panel states the stdin ceiling'],
 ]
 
@@ -241,54 +213,6 @@ export const APPLICABLE_WATCHED_CONSTANTS = WATCHED_CONSTANTS.filter(([file]) =>
 
 export const CLAIMS = [
   // ── values the panel states, derived from the constant that decides them ──────────────────
-  numberClaim({
-    id: 'skills-scan-depth',
-    file: SKILLS,
-    name: 'MAX_SCAN_DEPTH',
-    label: 'help.usage.body (scan depth)',
-    zh: ['上限 {n} 层目录'],
-    en: ['bounded to {n} levels'],
-  }),
-  numberClaim({
-    id: 'skills-max-roots',
-    file: SKILLS,
-    name: 'MAX_SKILL_ROOTS',
-    label: 'help.usage.body (skill directories)',
-    zh: ['{n} 个技能目录'],
-    en: ['{n} skill directories'],
-  }),
-  numberClaim({
-    id: 'skills-visited-directories',
-    file: SKILLS,
-    name: 'MAX_VISITED_DIRECTORIES',
-    label: 'help.usage.body (visited directories)',
-    zh: ['{n} 个已访问目录'],
-    en: ['{n} visited directories'],
-  }),
-  numberClaim({
-    id: 'skills-link-resolutions',
-    file: SKILLS,
-    name: 'MAX_LINK_RESOLUTIONS',
-    label: 'help.usage.body (link lookups)',
-    zh: ['最多 {n} 条'],
-    en: ['at most {n} per lookup'],
-  }),
-  numberClaim({
-    id: 'skills-refresh-poll',
-    file: SKILLS,
-    name: 'REFRESH_POLL_MS',
-    label: 'help.known.body (refresh cadence)',
-    zh: [n => `每 ${n / 1000} 秒`],
-    en: [n => `every ${n / 1000} seconds`],
-  }),
-  numberClaim({
-    id: 'skills-discovery-poll',
-    file: SKILLS,
-    name: 'DISCOVERY_POLL_MS',
-    label: 'help.known.body (re-discovery cadence)',
-    zh: [n => `每 ${n / 1000} 秒`],
-    en: [n => `a ${n / 1000}-second walk`],
-  }),
   numberClaim({
     id: 'stdin-ceiling',
     // Not evaluated on a baseline without this file; see BASELINE_ABSENT.
@@ -425,31 +349,21 @@ export const CLAIMS = [
     },
   }),
   defineClaim({
-    id: 'panel-claims-a-ten-second-cache',
-    issue: '#52 (baseline: the merged issue51 tip)',
-    // An absence as well, and one whose subject is the same sentence the "10 seconds" sits in:
-    // deleting that sentence must not read as the debt having been paid.
+    id: 'panel-states-wsl-skills-out-of-scope',
+    issue: 'v0.7.11 WSL-only responsibility',
     requires: [
-      { lang: 'zh', pattern: /技能目录/, why: 'the sentence describing skill-catalog discovery' },
-      { lang: 'en', pattern: /skill catalog/i, why: 'the sentence describing skill-catalog discovery' },
+      { lang: 'zh', pattern: /本插件的 WSL 模式不提供 Skills 检索或使用功能/, why: 'the WSL usage scope statement' },
+      { lang: 'en', pattern: /This plugin WSL modes do not provide Skills discovery or use/i, why: 'the WSL usage scope statement' },
     ],
-    // Repaired in CP7; keep the claim as a required regression, not an allowed failure.
     async run() {
       const panel = await panels()
-      const hits = []
-      for (const lang of ['zh', 'en']) {
-        hits.push(...findClaims(panel[lang].lines, CLAIMS_CACHE_TTL, deniesTheLifetime)
-          .hits.map(h => `${lang} ${h.key}: ${quote(h.line)}`))
-      }
-      return {
-        ok: hits.length === 0,
-        detail: hits.length === 0
-          ? 'no sentence claims a cache lifetime the provider does not have'
-          : `a time-to-live is claimed but the provider polls instead: ${hits.join(' | ')}`,
-      }
+      const zhOk = /本插件的 WSL 模式不提供 Skills 检索或使用功能/.test(panel.zh.dict['help.usage.body'] ?? '')
+      const enOk = /This plugin WSL modes do not provide Skills discovery or use/i.test(panel.en.dict['help.usage.body'] ?? '')
+      return { ok: zhOk && enOk, detail: zhOk && enOk
+        ? 'both usage panels explicitly limit WSL mode scope to filesystem and execution'
+        : 'both usage panels must state that WSL Skills discovery/use is not provided' }
     },
   }),
-
   // ── completeness: a fact the panel speaks about cannot lose its claim ─────────────────────
   //
   // Every other claim here answers "is what the document says true". This one answers the other

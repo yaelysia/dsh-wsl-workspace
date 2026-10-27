@@ -47,16 +47,15 @@ export function read(relative) {
 /**
  * A module-scope `const` from a source file, as a number or string.
  *
- * Deliberately a text read rather than an import. The constants this gate needs are not exported
- * (`src/host/wsl-skills.ts` keeps its seven as plain `const`), and exporting them to be read would
- * put a product-source change inside a test-only change. Reading the source text is what
- * `check-host-prompt-parity.mjs`, `test:rank` and `verify-lib-sync` already do in this repository.
+ * Deliberately a text read rather than an import. These constants may not be exported,
+ * and exporting them just for the gate would require an unrelated product-source change.
+ * `check-host-prompt-parity.mjs` and `verify-lib-sync` also read source text directly.
  *
  * The cost of that choice is a tolerance for formatting: a constant written as a multi-line
  * expression is not matched. That is why a miss throws with the name and the file in it, instead of
  * resolving to nothing.
  *
- * @param {string} file repository-relative path, e.g. `src/host/wsl-skills.ts`
+ * @param {string} file repository-relative path, e.g. `src/shared/wsl-stdin.ts`
  * @param {string} name the constant's identifier
  */
 export function hostConst(file, name) {
