@@ -497,54 +497,35 @@ test('legacy text personas retain host variables without adding a cwd dependency
   assert.match(out, /\n {7}Your working directory is inside a WSL/, 'legacy append keeps its indentation')
 })
 
-/** A composition carrying the upstream local-skill provider row. */
-const SKILL_FILESYSTEM_LIKE = `- id: persona
+test('WSL variants leave all Skill discovery and use to other plugins, including nested rows', () => {
+  const src = `- id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    suffix: Your working directory is {{cwd}}.
-    prefix: >-
-      You are a coding agent.
-
+    text: coding assistant
 - id: skill-filesystem
   name: '@deepseek-ai/dsh-skill-filesystem'
-
-- id: tool-jobs
-  name: '@deepseek-ai/dsh-tool-jobs'
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+- id: ordinary
+  name: '@deepseek-ai/dsh-other-plugin'
+- id: a-custom-group
+  name: cordis:group
+  group: true
+  config:
+    - id: nested-skill
+      name: '@deepseek-ai/dsh-skill-filesystem'
+    - id: nested-load
+      name: '@deepseek-ai/dsh-tool-skill'
+    - id: nested-normal
+      name: '@deepseek-ai/dsh-tool-jobs'
 `
-
-test('a WSL variant turns the local skill watcher off', () => {
-  // chokidar cannot watch \\wsl.localhost\...; the provider then reports an
-  // incomplete observation and dsh-tool-skill withholds the whole catalog, so
-  // the model never learns which skills exist (issue #22 follow-up).
-  const out = transformPresetForWsl(SKILL_FILESYSTEM_LIKE, SHELL, FS)
-  assert.ok(
-    out.includes("- id: skill-filesystem\n  name: '@deepseek-ai/dsh-skill-filesystem'\n  config:\n    watch: false\n"),
-    'watcher disabled on the provider row',
-  )
-  assert.ok(out.includes('- id: tool-jobs'), 'other rows kept')
-})
-
-test('the disabled watcher merges into an existing config block', () => {
-  const out = transformPresetForWsl(`- id: skill-filesystem
-  name: '@deepseek-ai/dsh-skill-filesystem'
-  config:
-    customSkillDirs:
-      - !!js "x"
-`, SHELL, FS)
-  assert.ok(out.includes('config:\n    watch: false\n    customSkillDirs:\n'), 'watch merged first, author config kept')
-  const rows = out.split('- id: ').filter(row => row.startsWith('skill-filesystem'))
-  assert.equal(rows.length, 1, 'exactly one skill-filesystem row')
-  assert.ok(rows[0]?.includes('config:\n    watch: false\n    customSkillDirs:\n'), 'single merged config key')
-})
-
-test('an explicit watch setting wins', () => {
-  const out = transformPresetForWsl(`- id: skill-filesystem
-  name: '@deepseek-ai/dsh-skill-filesystem'
-  config:
-    watch: true
-`, SHELL, FS)
-  assert.ok(out.includes('watch: true'), 'author value kept')
-  assert.ok(!out.includes('watch: false'), 'not overridden')
+  const out = transformPresetForWsl(src, SHELL, FS)
+  assert.ok(!out.includes('dsh-skill-filesystem'), 'WSL world does not mount a Skill file provider')
+  assert.ok(!out.includes('dsh-tool-skill'), 'WSL world does not mount the Skill tool')
+  assert.ok(!out.includes('nested-skill') && !out.includes('nested-load'))
+  assert.ok(out.includes('- id: ordinary'), 'unrelated top-level plugins are preserved')
+  assert.ok(out.includes('- id: nested-normal'), 'unrelated nested plugins are preserved')
+  assert.ok(out.includes('- id: a-custom-group'), 'parent group survives')
 })
 
 test('the session tier mounts the pipe tool and the keyboard door, never the host tool', () => {

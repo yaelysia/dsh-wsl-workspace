@@ -16,7 +16,7 @@ import assert from 'node:assert/strict'
 import { GREEN_CLAIMS } from './parity/claims.mjs'
 
 test('the registry has claims, so a green run means something', () => {
-  assert.ok(GREEN_CLAIMS.length >= 8,
+  assert.ok(GREEN_CLAIMS.length >= 7,
     `read ${GREEN_CLAIMS.length} green claim(s). An empty or near-empty registry reports the same `
     + 'green as a registry whose claims all hold, which is the failure mode this whole file exists '
     + 'to avoid.')

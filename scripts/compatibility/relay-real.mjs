@@ -15,7 +15,7 @@ const distro = process.env.WSL_COMPAT_DISTRO || 'Ubuntu';
 const user = process.env.WSL_COMPAT_USER || 'mille';
 const workspace = process.env.WSL_COMPAT_RELAY_CWD || '\\\\wsl.localhost\\Ubuntu\\home\\mille\\symprobe\\ws';
 /**
- * The Linux path of a `\\wsl.localhost\<distro>\…` spelling (as in skills-real).
+ * The Linux path of a `\\wsl.localhost\<distro>\…` spelling (the WSL UNC form).
  *
  * Both slash spellings are accepted because the Windows side resolves either — `//wsl.localhost/…`
  * is what a bash-driven invocation ends up passing when its own quoting keeps backslashes — and the

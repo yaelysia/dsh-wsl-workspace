@@ -184,6 +184,17 @@ function probeCount(pattern) {
 }
 
 try {
+  // Both calls enter a brand-new owner at once: the second must wait for the
+  // shared bootstrap instead of sending a frame into the uninitialized shell.
+  const coldOwner = makeOwner('cold-concurrent-first-call')
+  const [coldA, coldB] = await Promise.all([
+    call('echo COLD_A_$(( 7 * 6 ))', {}, coldOwner),
+    call('echo COLD_B_$(( 9 * 5 ))', {}, coldOwner),
+  ])
+  check('concurrent cold-start calls each return their own answer after one bootstrap',
+    coldA.text.includes('COLD_A_42') && !coldA.text.includes('COLD_B')
+      && coldB.text.includes('COLD_B_45') && !coldB.text.includes('COLD_A'),
+    JSON.stringify({ a: coldA.text.trim().slice(0, 40), b: coldB.text.trim().slice(0, 40) }))
   const first = await call('echo SESSION_$(( 13 * 7 ))')
   check('computed answer came back', first.text.includes('SESSION_91'), `${first.ms}ms ${first.text.trim().slice(0, 40)}`)
   check('it settled well inside the old hang', first.ms < 8_000, `${first.ms}ms`)

@@ -123,7 +123,7 @@ try {
     const response = await fetch(url, {
       method: options.method ?? 'POST',
       body: options.raw ?? (body === undefined ? undefined : JSON.stringify(body)),
-      headers: options.headers,
+      headers: { 'content-type': 'application/json', ...options.headers },
       signal: AbortSignal.timeout(20_000),
     })
     const text = await response.text()
@@ -177,6 +177,27 @@ try {
   const allowed = await post({ method: 'describe' })
   assert(allowed.status === 200 && allowed.envelope?.ok === true,
     'a real loopback request with a loopback Host is answered (the fence is not blanket-403)')
+  const sameOrigin = await post({ method: 'describe' }, {
+    headers: { origin: `http://127.0.0.1:${port}`, 'sec-fetch-site': 'same-origin' },
+  })
+  assert(sameOrigin.status === 200 && sameOrigin.envelope?.ok === true,
+    'same-origin browser JSON request remains usable')
+  for (const origin of ['https://evil.example.com', 'null', `http://127.0.0.1:${port + 1}`, `https://127.0.0.1:${port}`]) {
+    const rejected = await post({ method: 'setUser', params: { path: '\\\\wsl.localhost\\\\Ubuntu\\\\x', username: 'root' } }, {
+      headers: { origin },
+    })
+    assert(rejected.status === 403 && rejected.envelope?.error === 'same-origin only',
+      `cross-origin control request ${origin} is forbidden before dispatch`)
+  }
+  const badSite = await post({ method: 'describe' }, {
+    headers: { origin: `http://127.0.0.1:${port}`, 'sec-fetch-site': 'cross-site' },
+  })
+  assert(badSite.status === 403, 'cross-site browser metadata is forbidden independently')
+  for (const mime of ['text/plain', 'application/x-www-form-urlencoded', 'application/jsonp']) {
+    const simple = await post({ method: 'describe' }, { headers: { 'content-type': mime } })
+    assert(simple.status === 415 && simple.envelope?.error === 'application/json required',
+      `non-JSON/form content-type ${mime} cannot reach the control dispatcher`)
+  }
 
   // Cross-entry integration: the search bundle registers statistics the host API must see.
   const { apply: applySearch } = await import(pathToFileURL(join(repo, 'lib', 'wsl-search.js')).href)
@@ -459,6 +480,7 @@ let report = {}
 try {
   const response = await fetch('http://127.0.0.1:' + port + '/api', {
     method: 'POST',
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ method: 'listDistros' }),
     signal: AbortSignal.timeout(20000),
   })

@@ -34,8 +34,7 @@ const { apply } = require('../lib/index.js')
 // ── source compositions (the entry-list YAML dialect the host documents) ────
 // A standard-like source: a persona, the execution world rows the transform
 // replaces, the search suite the world re-provides, a `!!js` disabled
-// expression that must survive the parse, and the skill row whose watcher is
-// pinned off.
+// expression that must survive the parse, and a legacy skill row that WSL variants must not mount.
 const STANDARD_SRC = `# standard
 - id: persona
   name: '@deepseek-ai/dsh-persona'
@@ -305,12 +304,12 @@ const minWorld = minimal.plugins.find(row => row.id === 'wsl-world')
 assert(minimal.plugins.some(row => row.id === 'persistent-shell') === false, 'the source PTY group is replaced, not duplicated')
 assert(minWorld.config.some(row => row.id === (SESSION_TIER ? 'bash-wsl' : 'persistent-shell')), 'the world provides its own shell instead')
 assert(minWorld.config.some(row => row.id === 'search-wsl') === false, 'a mode with no search suite gains none')
-assert(minimal.plugins.some(row => row.id === 'skill-filesystem') === false, 'minimal declares no skill row to amend')
+assert(minimal.plugins.some(row => row.id === 'skill-filesystem') === false, 'minimal does not mount any Skill provider')
 
 const standardPersona = standard.plugins.find(row => row.id === 'persona')
 assert(standardPersona.config.suffix.includes('inside a WSL'), 'the persona is amended for a WSL working directory')
-const skillRow = standard.plugins.find(row => row.id === 'skill-filesystem')
-assert(skillRow.config.watch === false, 'the skill watcher is pinned off for the UNC share')
+assert(!standard.plugins.some(row => row.id === 'skill-filesystem' || row.id === 'tool-skill'),
+  'the WSL declaration never publishes inherited Skill provider/tool rows')
 
 // ── nothing is written to the retired root, and its leftovers are cleared ──
 assert(!existsSync(join(home, '.agent-presets', 'wsl-standard')), 'the retired per-variant directory is not rewritten')

@@ -474,9 +474,14 @@ export function apply(ctx: Context, config?: Config): void {
   }
 
   const sessions = new Map<string, WslBashSession>()
+  // The owner map is populated before bootstrap finishes. Concurrent first
+  // calls must wait on the same bootstrap instead of dispatching a frame into
+  // a half-initialized shell.
+  const booting = new Map<string, Promise<void>>()
   const cleanup = () => {
     for (const session of sessions.values()) void session.dispose()
     sessions.clear()
+    booting.clear()
   }
   ctx.effect?.(() => cleanup)
 
@@ -599,10 +604,21 @@ export function apply(ctx: Context, config?: Config): void {
             void created.dispose()
           })
         }
-        await session.start().catch((error: unknown) => {
-          sessions.delete(ownerKey)
+        const createdBoot = session.start()
+        booting.set(ownerKey, createdBoot)
+        try { await createdBoot }
+        catch (error) {
+          if (sessions.get(ownerKey) === created) sessions.delete(ownerKey)
+          void created.dispose()
           throw error instanceof Error ? error : new Error(String(error))
-        })
+        } finally {
+          if (booting.get(ownerKey) === createdBoot) booting.delete(ownerKey)
+        }
+      } else {
+        // Second simultaneous request for a cold owner: never race the
+        // bootstrap frame, and never create a second session for one owner.
+        const initialization = booting.get(ownerKey)
+        if (initialization !== undefined) await initialization
       }
       const signature = args.command.replace(/\s+/g, ' ').trim()
       let tally = attempts.get(session)

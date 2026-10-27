@@ -1,5 +1,7 @@
 # Documentation index
 
+**Current scope (v0.7.11):** this plugin no longer provides or mounts WSL Skills discovery/use. Older changelogs and evidence of the retired implementation are preserved as historical records.
+
 Current fork: [native file operations and their boundaries](performance-phase4.md), [RPC configuration/diagnostics](performance-phase3.md), and the [current English](../README.md) / [中文](../README.zh.md) installation guides. Older design records describe their named release, not necessarily the native backend.
 
 Where each document lives, what language it is in, and whether it still describes

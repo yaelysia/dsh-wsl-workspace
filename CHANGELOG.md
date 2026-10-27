@@ -2,6 +2,11 @@
 
 All notable changes to `dsh-wsl-workspace`, newest first. Back to the [README](README.md); the Chinese record is [CHANGELOG.zh.md](CHANGELOG.zh.md).
 
+## 0.7.11 — 2026-10-27
+- **WSL Skills removed:** generated WSL variants drop inherited Skills filesystem/tool rows. This plugin no longer registers a Skills provider or searches, refreshes, caches or resolves Skills paths; source, tests and fixtures dedicated to that feature have been removed. Ordinary DSH modes remain outside this change.
+- **Correctness fixes:** same-origin browser and JSON request checks on the localhost control API; unsafe UNC link-unavailable create fails closed instead of using lstat-then-overwriting rename; stale preset generations can no longer publish after reload; simultaneous first Bash calls share initialization; GNU grep documentation no longer promises `(?i)`.
+- Linux-native guarded writes, CP20 read windows and search/RPC contracts remain; Windows/WSL/Loader CI is required before merging. UNC filesystems that cannot create hard links now refuse protected creates rather than risking external overwrites.
+
 ## 0.7.10 — 2026-10-27
 - **CP20: native read windows.** For WSL-native files, the model-facing `read` now asks the Linux worker to scan and count UTF-8 lines, returning only the requested `offset`/`limit` window instead of transferring the whole file. The original tool schema/rendering, `fs/observed`, version-guarded writes, BOM/CRLF and Windows-drive/UNC fallback remain.
 - The Linux worker performs a fresh file scan on each call, without a persistent index/cache. Its window path can inspect files larger than the full-content 16 MiB cap, while writes/edits and full-content reads retain that limit. New registered-tool parity and Windows→WSL2 performance benchmarks check bounded output and small-file controls. Performance conclusions require measured paired data, not estimated ratios.

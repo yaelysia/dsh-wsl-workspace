@@ -328,40 +328,35 @@ function wslWorldGroup(
  */
 const PERSONA_APPEND = ' Your working directory is inside a WSL (Windows Subsystem for Linux) distribution: the bash tool and the file read/write/edit tools use Linux paths, and the Windows filesystem is reachable as /mnt/<drive> for file migration.'
 
-/** The upstream local-skill provider row, whose watcher cannot watch a UNC share. */
-const SKILL_FILESYSTEM_ROW = 'skill-filesystem'
-
 /**
- * Turn the local skill provider's watcher off inside a WSL variant.
- *
- * `@deepseek-ai/dsh-skill-filesystem` reports an INCOMPLETE observation when
- * its watcher fails to start, and `dsh-tool-skill` withholds the whole catalog
- * while a snapshot is incomplete. chokidar cannot watch
- * `\\wsl.localhost\<distro>\...`, so in a WSL session the model never sees the
- * catalog at all - `skill` still loads one by name, but nothing tells the model
- * which skills exist. With the watcher off the discovery completes (the
- * plugin's own provider rescans the share on demand, and the next session gets
- * a fresh catalog); the price is no live refresh inside one running session,
- * which never worked on this substrate anyway.
- * @param block - the row's lines.
- * @returns the row's lines with `watch: false` merged into its config.
+ * The WSL execution variant does not provide, discover or activate Skills.
+ * Remove only skill-specific plugin rows; leave other DSH components intact.
+ * A nested Cordis group may carry these rows, so filter by actual row depth
+ * instead of removing only top-level occurrences.
  */
-function disableSkillWatch(block: readonly string[]): string[] {
-  const lines = [...block]
-  // An explicit `watch:` from the author wins.
-  if (lines.some(line => /^\s*watch:/.test(line))) return lines
-  const configIndex = lines.findIndex(line => /^\s*config:\s*$/.test(line))
-  if (configIndex >= 0) {
-    const childIndent = `${/^(\s*)/.exec(lines[configIndex] ?? '')?.[1] ?? '  '}  `
-    lines.splice(configIndex + 1, 0, `${childIndent}watch: false`)
-    return lines
+function withoutSkillRows(lines: readonly string[]): string[] {
+  const output: string[] = []
+  for (let index = 0; index < lines.length;) {
+    const line = lines[index] ?? ''
+    const match = /^(\s*)- id:\s*([A-Za-z0-9_.-]+)\s*$/.exec(line)
+    if (match === null) { output.push(line); index++; continue }
+    const depth = match[1]!.length
+    let end = index + 1
+    while (end < lines.length) {
+      const candidate = lines[end] ?? ''
+      if (candidate.trim() !== '' && (/^\s*/.exec(candidate)?.[0].length ?? 0) <= depth) break
+      end++
+    }
+    const block = lines.slice(index, end)
+    const ownName = block.find((value, j) => j>0 &&
+      (/^\s*/.exec(value)?.[0].length ?? 0) === depth + 2 && /^\s*name:\s*/.test(value))
+    const plugin = /^\s*name:\s*['"]?(@deepseek-ai\/dsh-(?:tool-)?skill(?:-[A-Za-z0-9_-]+)?)['"]?\s*$/.exec(ownName ?? '')?.[1]
+    const isSkill = match[2] === 'skill-filesystem' || match[2] === 'tool-skill'
+      || plugin !== undefined
+    if (isSkill) index = end
+    else { output.push(line); index++ }
   }
-  const rowIndent = /^(\s*)/.exec(lines[0] ?? '')?.[1] ?? ''
-  // Insert before the row block's trailing blank line, not after it.
-  let insertAt = lines.length
-  while (insertAt > 0 && (lines[insertAt - 1] ?? '').trim() === '') insertAt -= 1
-  lines.splice(insertAt, 0, `${rowIndent}  config:`, `${rowIndent}    watch: false`)
-  return lines
+  return output
 }
 
 /** The top-level rows of one composition, as (startLine, endLineExclusive) spans. */
@@ -545,7 +540,7 @@ export function transformPresetForWsl(
   fileOptions?: FileOptions,
   readPath?: string,
 ): string {
-  const lines = source.split('\n')
+  const lines = withoutSkillRows(source.split('\n'))
   const spans = topLevelSpans(lines)
   const kept: string[] = []
   const seen = new Set<string>()
@@ -568,10 +563,6 @@ export function transformPresetForWsl(
     if (WORLD_ROWS.has(id) || isWslWorldGroup(block)) {
       if (EDITOR_ROWS.has(id)) sawEditor = true
       if (id === 'tool-fs-search') sawSearch = true
-      continue
-    }
-    if (id === SKILL_FILESYSTEM_ROW) {
-      kept.push(...disableSkillWatch(block))
       continue
     }
     if (id === 'persona' && !personaAppended && appendablePersona(lines, span)) {

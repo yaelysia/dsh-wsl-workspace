@@ -47,7 +47,6 @@ import { zh, en } from '../src/client/locales.ts'
 const ABSENCE_CLAIMS = [
   'panel-does-not-present-pty-as-the-default-bash',
   'panel-denies-run-in-background',
-  'panel-claims-a-ten-second-cache',
 ]
 
 test('every claim has the shape the runners index it by', () => {
@@ -100,9 +99,11 @@ test('every anchor matches the panel as it stands', () => {
 })
 
 test('the completeness half is populated', () => {
-  assert.ok(APPLICABLE_WATCHED_CONSTANTS.length >= 4,
+  assert.ok(APPLICABLE_WATCHED_CONSTANTS.length >= 1,
     `${APPLICABLE_WATCHED_CONSTANTS.length} watched constant(s); the coverage that makes a deleted claim `
     + 'visible is only as wide as this list')
+  assert.equal(APPLICABLE_WATCHED_CONSTANTS.length, WATCHED_CONSTANTS.length,
+    'all watched values must have source files; retired capabilities must be removed from the registry')
   assert.ok(CLAIMS.some(claim => claim.id === 'every-watched-constant-is-claimed'),
     'no claim covers the watched constants, so deleting one would go unnoticed')
   // Every entry must name a constant that exists, or the coverage claim is asking about a ghost.
@@ -112,13 +113,13 @@ test('the completeness half is populated', () => {
 })
 
 test('all applicable claims are accounted for even when no debt remains', () => {
-  assert.ok(GREEN_CLAIMS.length >= 8,
+  assert.ok(GREEN_CLAIMS.length >= 7,
     `${GREEN_CLAIMS.length} claim(s) must hold; an empty set reports the same green as one that all hold`)
   assert.equal(GREEN_CLAIMS.length + DECLARED_RED_CLAIMS.length, CHECKED.length)
 })
 
 test('a constant that is not there throws instead of resolving to nothing', () => {
-  assert.throws(() => hostConst('src/host/wsl-skills.ts', 'NO_SUCH_CONSTANT'), /NO_SUCH_CONSTANT/)
+  assert.throws(() => hostConst('src/shared/wsl-stdin.ts', 'NO_SUCH_CONSTANT'), /NO_SUCH_CONSTANT/)
   assert.throws(() => hostConst('src/host/no-such-file.ts', 'ANYTHING'), /no-such-file/)
 })
 
@@ -197,11 +198,13 @@ test('any remaining declared debt is evaluated and genuinely failing', async () 
 })
 
 test('repaired help statements are required and cannot silently become allowed failures', async () => {
-  for (const id of ['panel-denies-run-in-background', 'panel-claims-a-ten-second-cache']) {
+  for (const id of ['panel-denies-run-in-background', 'panel-states-wsl-skills-out-of-scope']) {
     const claim = GREEN_CLAIMS.find(item => item.id === id)
     assert.ok(claim, 'missing required claim: ' + id)
     assert.equal((await claim.run()).ok, true, id)
   }
+  assert.match(zh['help.usage.body'], /本插件的 WSL 模式不提供 Skills 检索或使用功能/)
+  assert.match(en['help.usage.body'], /This plugin WSL modes do not provide Skills discovery or use/i)
   for (const dict of [zh, en]) {
     assert.match(dict['help.usage.body'], /run_in_background: true/)
     assert.match(dict['help.compat.body'], /CHECKPOINT\.md/)

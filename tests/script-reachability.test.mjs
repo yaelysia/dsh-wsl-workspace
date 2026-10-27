@@ -243,3 +243,14 @@ test('the unit bucket registers test files, and every test file is registered so
     `test file(s) that no script runs:\n${orphans.map(file => `  ${file}`).join('\n')}`
     + '\n  Register it, or delete it: an unrun test is a coverage claim nobody can check.')
 })
+
+test('manual PowerShell compatibility runner references existing files', () => {
+  // package.json script reachability alone cannot see scripts invoked by Run-Checks.ps1.
+  const source = readFileSync(join(repoRoot, 'scripts/compatibility/Run-Checks.ps1'), 'utf8')
+  const targets = [...source.matchAll(/Join-Path \$r\.plugin '((?:scripts|tests)\/[^']+\.(?:mjs|ts))'/g)]
+    .map(match => match[1])
+  assert.ok(targets.length >= 12, 'PowerShell script references were not extracted')
+  const ignored = generatedPaths()
+  const missing = targets.filter(path => !ignored.isGenerated(path) && !existsSync(join(repoRoot, path)))
+  assert.deepEqual(missing, [], `PowerShell compatibility checks invoke missing scripts: ${missing.join(', ')}`)
+})

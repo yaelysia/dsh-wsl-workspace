@@ -84,7 +84,7 @@ jobs:
       - run: npm ci
       - name: install pinned @deepseek-ai host packages
         run: node ci/install-pinned.mjs
-      - name: node bucket (build + host-package tests + host pair + rank --strict)
+      - name: node bucket (host-package/Loader regressions and checked artifact)
         run: npm run test:node
       - name: typecheck does not grow past its recorded baseline
         run: node scripts/typecheck-gate.mjs
@@ -209,7 +209,7 @@ jobs:
           cat logs/preflight-wsl.log logs/preflight-unc.log
       - name: build (smoke-built / shell-extra / client consume lib/)
         run: npm run build
-      - name: win32-semantics unit files (wsl-skills + fs-policy assume drive-shaped cwd)
+      - name: win32-semantics unit files (fs-policy and relay-node assume drive-shaped cwd)
         run: npm run test:win32
       - name: run the src-plane gates
         # The src pass — the behaviour the gates had before `lib` was ever loaded. `lib/` is what
@@ -254,7 +254,6 @@ jobs:
           run_one make-smoke-built node scripts/make-smoke-built.mjs
           run_one smoke-built node --experimental-strip-types tests/smoke-built.ts
           run_one fs-real node --experimental-strip-types scripts/compatibility/fs-real.mjs
-          run_one skills-real node --experimental-strip-types scripts/compatibility/skills-real.mjs
           run_one search-real node --experimental-strip-types scripts/compatibility/search-real.mjs
           run_one relay-real node --experimental-strip-types scripts/compatibility/relay-real.mjs
           # The readiness contract against a login pass that rewrites it. Own fixture root, and
@@ -308,10 +307,6 @@ jobs:
           run_lib bash-session-real node --experimental-strip-types scripts/compatibility/bash-session-real.mjs
           node --experimental-strip-types scripts/compatibility/bash-parity-real.mjs --self-test > logs/lib-parity-selftest.log 2>&1 || { echo "self-test rc=$?"; cat logs/lib-parity-selftest.log; FAIL=1; }
           MSYS_NO_PATHCONV=1 DSH_WSL_TEST_PLANE=lib WSL_COMPAT_ROOT=/tmp/dsh-wsl-parity-lib node --experimental-strip-types scripts/compatibility/bash-parity-real.mjs > logs/lib-bash-parity-real.log 2>&1 || { echo "rc=$?"; tail -8 logs/lib-bash-parity-real.log || true; FAIL=1; }
-          # skills-real is deliberately not attempted under `lib`: tsdown declares no entry for
-          # the provider (the class is file-local to lib/index.js:1122) and plane.mjs throws
-          # rather than falling back to src. Adding the entry changes what users install, so it
-          # is a maintainer decision, not a night-run side effect.
           exit $FAIL
       - name: boot a real host and reach WSL through its own registry
         # The product's **own** loader, booted, and then WSL reached through the registry the host hands
@@ -360,7 +355,6 @@ jobs:
           # name — passing `search-real` here demanded a line no driver can emit.
           node scripts/verify-plane-log.mjs logs/fs-real.log src fs || RC=1
           node scripts/verify-plane-log.mjs logs/search-real.log src search || RC=1
-          node scripts/verify-plane-log.mjs logs/skills-real.log src skills || RC=1
           node scripts/verify-plane-log.mjs logs/relay-real.log src relay || RC=1
           node scripts/verify-plane-log.mjs logs/relay-profile-real.log src relay || RC=1
           node scripts/verify-plane-log.mjs logs/tool-bash-real.log src shell || RC=1
