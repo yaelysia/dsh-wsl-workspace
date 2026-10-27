@@ -344,6 +344,8 @@ describe('apply', () => {
     assert.deepEqual(grep.parameters.required, ['pattern'])
     assert.deepEqual(Object.keys(grep.parameters.properties), ['pattern', 'path', 'include'])
     assert.equal(grep.parameters.properties.pattern.description.includes('GNU grep -E'), true)
+    assert.equal(grep.parameters.properties.pattern.description.includes('no (?i)'), true,
+      'GNU ERE cannot process a PCRE inline case-insensitive modifier')
     assert.equal(grep.parameters.properties.include.description.includes('relative to the search root'), true)
     assert.equal(grep.description.includes('GNU grep extended regular expression'), true)
     assert.equal(grep.timeoutMs, CONFIG.timeoutMs)
